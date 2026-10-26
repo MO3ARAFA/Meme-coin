@@ -1,0 +1,18 @@
+# Secrets — never commit
+.env
+*.keypair.json
+keypair*.json
+id.json
+
+# Runtime data
+data/
+cache/
+*.csv
+approved_wallets.json
+state.json
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/

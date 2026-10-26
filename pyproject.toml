@@ -1,0 +1,9 @@
+[project]
+name = "copybot"
+version = "0.1.0"
+description = "Auditable anti-exit-liquidity Solana memecoin copy-trading engine (shadow-first)"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
