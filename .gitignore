@@ -9,6 +9,7 @@ data/
 cache/
 *.csv
 approved_wallets.json
+seed_wallets.txt
 state.json
 
 # Python
