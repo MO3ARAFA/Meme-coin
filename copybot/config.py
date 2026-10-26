@@ -56,9 +56,48 @@ class ScorerConfig(BaseModel):
     max_cycle_roi: float = 20.0
     max_unpriced_ratio: float = 0.25
     min_avg_buy_sol: float = 0.1
+    # Scratch-aware ROI: discretionary pros scratch dead trades at ~0%, which drags the plain
+    # median down. Pass if the median of NON-scratch trades clears min_median_roi, or if the
+    # trimmed mean (top outliers removed) and profit factor are both strong.
+    scratch_band: float = 0.03
+    trimmed_top_frac: float = 0.05
+    min_trimmed_mean_roi: float = 0.12
+    alt_min_profit_factor: float = 1.6
+    # Latency-adjusted copy replay: re-price every copyable historical trade as WE would
+    # have filled it (entry worse by the penalty, our fee cap paid on both legs). The edge
+    # must survive this, equal-weighted like our fixed position sizing.
+    replay_entry_penalty: float = 0.025
+    replay_leg_fee: float = 0.012
+    replay_exit_penalty: float = 0.0
+    replay_min_buy_sol: float = 0.25  # buys the live gate would skip anyway are not replayed
+    replay_min_trades: int = 15
+    replay_min_profit_factor: float = 1.35
+    replay_min_expectancy: float = 0.0
+    # Adversarial checks
+    bait_size_frac: float = 0.30  # buy < 30% of the wallet's median buy = possible bait
+    max_token_recipients: int = 3  # tokens shipped to >= this many wallets = feeder/sybil
+    min_link_sol: float = 0.05  # direct SOL transfers >= this between candidates link them
     max_trades_per_day: float = 40.0  # above this it is a bot, not a trader
     max_days_since_last_trade: float = 4.0
     top_n: int = 5
+
+
+class HarvestConfig(BaseModel):
+    """`harvest`: cross-token mid-wave discovery of candidate wallets for the scorer."""
+
+    min_liquidity_usd: float = 40_000
+    min_age_days: float = 1.0
+    max_age_days: float = 14.0
+    min_volume_h24_usd: float = 100_000
+    max_tokens: int = 80
+    signature_pages: int = 8  # 1000 pool signatures per page; sampled evenly = mid-wave, not just the latest
+    sample_per_token: int = 120
+    min_swap_sol: float = 0.25
+    max_deep_checks: int = 80
+    max_tx_per_day: float = 80.0
+    deep_history_txs: int = 250
+    min_profitable_tokens: int = 2
+    top_n: int = 40
 
 
 class SafetyConfig(BaseModel):
@@ -72,6 +111,8 @@ class SafetyConfig(BaseModel):
     max_roundtrip_loss_pct: float = 0.05
     reentry_cooldown_s: int = 24 * 3600
     max_signal_age_s: float = 25.0  # whale tx older than this (e.g. after a reconnect) is stale
+    bait_size_frac: float = 0.30  # whale buy < 30% of its median buy size = inducement bait -> abort
+    cluster_window_s: float = 600.0  # 2+ independent approved wallets buying within this = cluster
     min_whale_buy_sol: float = 0.25  # ignore dust buys (often bait)
     gate_latency_budget_ms: int = 300  # target; logged when exceeded
     gate_hard_timeout_ms: int = 2500  # abort the copy if checks take longer than this
@@ -90,6 +131,11 @@ class ExitConfig(BaseModel):
     time_decay_minutes: float = 45.0
     time_decay_min_profit: float = 0.15
     max_hold_minutes: float = 240.0  # absolute cap: never bag-hold a memecoin overnight
+    cluster_trailing_stop_pct: float = 0.25  # wider trail for the runner of a HIGH_CONVICTION_CLUSTER
+    # Auto-quarantine: a wallet that dumps this fast after its own buy, this many times, is
+    # hunting copy-traders and is removed from the approved list.
+    fast_dump_window_s: float = 90.0
+    quarantine_strikes: int = 2
     poll_interval_s: float = 2.0  # cheap DexScreener mark polling
     quote_refresh_s: float = 12.0  # executable Jupiter sell quote refresh per position
     no_route_emergency_s: float = 90.0  # no sell route this long => treat as rugged
@@ -164,6 +210,7 @@ class Settings(BaseSettings):
     poll_interval_s: float = 2.0
 
     scorer: ScorerConfig = Field(default_factory=ScorerConfig)
+    harvest: HarvestConfig = Field(default_factory=HarvestConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     exits: ExitConfig = Field(default_factory=ExitConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)

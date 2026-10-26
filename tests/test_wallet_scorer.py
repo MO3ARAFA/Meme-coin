@@ -124,3 +124,67 @@ def test_vault_funded_buys_are_unpriced_not_lottery_wins():
     assert m.closed_trades == 30  # the 12 vault cycles don't pollute ROI stats
     assert m.mean_roi < 1.0
     assert any("off-wallet" in r for r in m.rejections)
+
+
+# ---- scratch-aware ROI + latency-adjusted replay -----------------------------------
+def scratcher_roi(i):
+    """FSTqRd92-like pro: half the trades scratched near 0%, winners run, losers cut."""
+    k = i % 10
+    return 0.01 if k < 5 else (0.60 if k < 8 else -0.15)
+
+
+def test_scratching_pro_passes_on_non_scratch_median_and_replay():
+    m = metrics(trader(40, scratcher_roi, hold_s=900))
+    assert abs(m.median_roi) < 0.05  # the plain median would have rejected this trader
+    assert m.nonscratch_median_roi >= 0.15
+    assert m.replay_trades == 40 and m.replay_profit_factor >= 1.35 and m.replay_expectancy > 0
+    assert m.passed, m.rejections
+
+
+def test_thin_scalper_edge_dies_under_copy_latency():
+    # +4% winners / -3% losers at 65% win rate: PF ~2.5 for the whale, but after a 2.5% entry
+    # penalty and 1.2%/leg fees every winner becomes a loser for the copier.
+    m = metrics(trader(40, lambda i: 0.20 if i % 20 < 13 else -0.03, hold_s=900))
+    assert m.profit_factor > 2.0
+    m2 = metrics(trader(40, lambda i: 0.04 if i % 20 < 13 else -0.03, hold_s=900))
+    assert any("copy latency" in r for r in m2.rejections)
+    assert m2.replay_expectancy < 0
+
+
+def test_replay_skips_buys_the_live_gate_would_never_copy():
+    events = trader(30, good_roi, hold_s=1200, size=2.0)
+    t = int(NOW - 3600 * 5)
+    for i in range(10):  # tiny bait-sized trades that "win" big
+        events.append(ev(t + i, Side.BUY, f"B{i}", 0.2, 10, 0, 10))
+        events.append(ev(t + i + 600, Side.SELL, f"B{i}", 1.0, 10, 10, 0))
+    m = metrics(events)
+    assert m.median_buy_sol == 2.0
+    assert m.replay_trades == 30  # the 0.2 SOL buys (< 30% of median, < 0.25 SOL) are excluded
+
+
+# ---- sybil links -------------------------------------------------------------------
+def test_linked_wallets_are_one_operator_and_only_the_best_is_approved():
+    from copybot.wallet_scorer import WalletMetrics, select_approved
+
+    def fresh():
+        return (WalletMetrics("A", passed=True, score=80, counterparties=["B"]),
+                WalletMetrics("B", passed=True, score=70), WalletMetrics("C", passed=True, score=60))
+
+    a, b, c = fresh()
+    approved = select_approved([a, b, c], top_n=5, quarantined=set())
+    assert [m.address for m in approved] == ["A", "C"]
+    assert a.link_group == b.link_group != c.link_group
+    assert any("same operator" in r for r in b.rejections)
+    # A quarantined as a hunter: its linked sibling B is the same operator and is barred too
+    assert [m.address for m in select_approved(list(fresh()), 5, quarantined={"A"})] == ["C"]
+
+
+def test_counterparty_extraction_from_parsed_instructions():
+    from copybot.wallet_scorer import sol_counterparties
+
+    tx = {"transaction": {"message": {"instructions": [
+        {"program": "system", "parsed": {"type": "transfer", "info": {"source": "W", "destination": "X", "lamports": 10**8}}},
+        {"program": "system", "parsed": {"type": "transfer", "info": {"source": "Y", "destination": "W", "lamports": 10**3}}},
+    ]}}, "meta": {"innerInstructions": [{"instructions": [
+        {"program": "system", "parsed": {"type": "transfer", "info": {"source": "Z", "destination": "W", "lamports": 10**9}}}]}]}}
+    assert sol_counterparties(tx, "W", 5 * 10**7) == {"X", "Z"}  # Y below the link threshold

@@ -6,7 +6,7 @@ import time
 import pytest
 
 from copybot.config import Settings
-from copybot.constants import LAMPORTS_PER_SOL, TOKEN_2022_PROGRAM, WSOL_MINT
+from copybot.constants import LAMPORTS_PER_SOL, TOKEN_2022_PROGRAM, USDC_MINT, WSOL_MINT
 from copybot.copy_engine import CopyEngine
 from copybot.dexscreener import PairInfo
 from copybot.http_utils import make_client
@@ -35,12 +35,12 @@ class FakeMarket:
         self.quotes += 1
         if not self.routable:
             raise NoRouteError("no route")
-        if input_mint == WSOL_MINT and output_mint == MEME:
-            out = int(amount / self.price * (1 - self.fee))
-        elif input_mint == MEME and output_mint == WSOL_MINT:
-            out = int(amount * self.price * (1 - self.fee))
-        else:  # SOL/USD
+        if output_mint == USDC_MINT:  # SOL/USD reference
             out = 100 * 10**6
+        elif input_mint == WSOL_MINT:  # buying any memecoin
+            out = int(amount / self.price * (1 - self.fee))
+        else:  # selling any memecoin
+            out = int(amount * self.price * (1 - self.fee))
         return Quote(input_mint, output_mint, amount, out, int(out * (1 - slippage_bps / 1e4)), 0.001, slippage_bps,
                      ("FakeAmm",), {})
 
@@ -79,10 +79,11 @@ async def engine(tmp_path):
         yield eng
 
 
-async def whale_buys(eng, sig="buy1", price=500.0, sol=2.0, before=0):
+async def whale_buys(eng, sig="buy1", price=500.0, sol=2.0, before=0, wallet=WHALE, mint=MEME, block_time=None):
     tokens = int(sol * SOL / price)
-    eng.fake_rpc.txs[sig] = whale_buy_tx(sig, sol_spent=int(sol * SOL), tokens=tokens, before=before, block_time=int(time.time()))
-    await eng.on_signature(WHALE, sig)
+    eng.fake_rpc.txs[sig] = whale_buy_tx(sig, sol_spent=int(sol * SOL), tokens=tokens, before=before, wallet=wallet,
+                                         mint=mint, block_time=block_time or int(time.time()))
+    await eng.on_signature(wallet, sig)
     return tokens
 
 
@@ -169,3 +170,72 @@ async def test_state_survives_restart(engine, tmp_path):
         again = CopyEngine(engine.s, client)
     assert [p.id for p in again.store.state.open_positions()] == [pid]
     assert again._shadow_balance.lamports == engine._shadow_balance.lamports
+
+
+# ---- adversarial intelligence ------------------------------------------------------
+WHALE2 = "Wha1e2222222222222222222222222222222222222"
+MEME2 = "MemeMint222222222222222222222222222222pump"
+
+
+def profiles(eng, **kw):
+    from copybot.safety_gate import WalletProfile
+
+    eng.profiles = {w: WalletProfile(w, *v) for w, v in kw.items()}
+    eng.gate.profiles = eng.profiles
+
+
+async def test_bait_sized_buy_is_aborted(engine):
+    profiles(engine, **{WHALE: (3.0, 0)})
+    await whale_buys(engine, sig="bait", sol=0.5)  # 0.5 SOL vs a 3 SOL median: < 30%
+    assert engine.store.state.open_positions() == []
+    await whale_buys(engine, sig="real", sol=2.5)
+    assert len(engine.store.state.open_positions()) == 1
+
+
+async def test_independent_cluster_tags_position_and_widens_runner_trail(engine):
+    profiles(engine, **{WHALE: (2.0, 0), WHALE2: (2.0, 1)})
+    await whale_buys(engine, sig="w1")
+    [pos] = engine.store.state.open_positions()
+    assert not pos.high_conviction
+    await whale_buys(engine, sig="w2", wallet=WHALE2)  # second, independent wallet within 10 min
+    assert pos.high_conviction and set(pos.cluster_wallets) == {WHALE, WHALE2}
+    assert len(engine.store.state.open_positions()) == 1  # consensus never doubles the position
+
+    from copybot.exit_manager import Action, decide_exit
+
+    pos.scaled_out, pos.stop_ratio, pos.peak_ratio = True, 1.02, 2.0
+    cfg = engine.s.exits
+    assert decide_exit(pos, 1.65, time.time(), cfg).action is Action.HOLD  # -17.5% from peak: inside 25% trail
+    assert "25%" in decide_exit(pos, 1.49, time.time(), cfg).reason
+    pos.high_conviction = False
+    assert decide_exit(pos, 1.65, time.time(), cfg).action is Action.SELL  # normal 15% trail
+
+
+async def test_linked_wallets_do_not_count_as_consensus(engine):
+    profiles(engine, **{WHALE: (2.0, 7), WHALE2: (2.0, 7)})  # same link group = same operator
+    await whale_buys(engine, sig="l1")
+    await whale_buys(engine, sig="l2", wallet=WHALE2)
+    [pos] = engine.store.state.open_positions()
+    assert not pos.high_conviction
+
+
+async def test_two_fast_dumps_quarantine_the_wallet(engine):
+    import json
+
+    engine.s.approved_wallets_path.write_text(json.dumps({"wallets": [{"address": WHALE, "score": 70}]}))
+    for n, mint in enumerate((MEME, MEME2)):
+        t0 = int(time.time())
+        tokens = await whale_buys(engine, sig=f"fb{n}", mint=mint, block_time=t0)
+        engine.fake_rpc.txs[f"fd{n}"] = whale_sell_tx(f"fd{n}", sol_received=SOL, tokens=tokens // 2, before=tokens,
+                                                      mint=mint, block_time=t0 + 40)  # dumped 40 s after buying
+        await engine.on_signature(WHALE, f"fd{n}")
+        for task in list(engine._tasks):
+            await task
+    assert engine.store.state.hunter_strikes[WHALE] == 2
+    assert WHALE in engine.store.state.quarantined
+    data = json.loads(engine.s.approved_wallets_path.read_text())
+    assert data["wallets"] == [] and data["quarantined"][0]["address"] == WHALE
+    assert all(p.status is PositionStatus.CLOSED for p in engine.store.state.positions.values())
+    MEME3 = "MemeMint333333333333333333333333333333pump"
+    await whale_buys(engine, sig="after", mint=MEME3)
+    assert engine.store.state.open_positions() == []  # signals from a quarantined wallet are ignored

@@ -64,9 +64,11 @@ def decide_exit(pos: Position, ratio: float | None, now: float, cfg: ExitConfig)
         if ratio <= pos.stop_ratio:
             kind = "break-even stop" if pos.scaled_out else "hard stop"
             return ExitDecision(Action.SELL, 1.0, f"{kind} at {ratio - 1:+.1%}")
-        if pos.peak_ratio >= 1 + cfg.trailing_activation_profit and ratio <= pos.peak_ratio * (1 - cfg.trailing_stop_pct):
+        # The runner of an independent-cluster position gets room to run after the scale-out.
+        trail = cfg.cluster_trailing_stop_pct if (pos.high_conviction and pos.scaled_out) else cfg.trailing_stop_pct
+        if pos.peak_ratio >= 1 + cfg.trailing_activation_profit and ratio <= pos.peak_ratio * (1 - trail):
             return ExitDecision(
-                Action.SELL, 1.0, f"trailing stop: {ratio - 1:+.1%} from peak {pos.peak_ratio - 1:+.1%}"
+                Action.SELL, 1.0, f"trailing stop ({trail:.0%}): {ratio - 1:+.1%} from peak {pos.peak_ratio - 1:+.1%}"
             )
         if not pos.scaled_out and ratio >= 1 + cfg.scale_out_profit:
             return ExitDecision(Action.SELL, cfg.scale_out_fraction, f"scale-out at {ratio - 1:+.1%}")

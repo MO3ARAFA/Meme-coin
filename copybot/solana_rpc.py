@@ -111,6 +111,18 @@ class SolanaRpc:
         res = await self.call("getAccountInfo", [address, {"encoding": "jsonParsed", "commitment": "confirmed"}])
         return res.get("value") if res else None
 
+    async def get_multiple_accounts(self, addresses: list[str]) -> list[dict | None]:
+        """Account owner/executable for up to 100 addresses per call (base64, data sliced away)."""
+        out: list[dict | None] = []
+        for i in range(0, len(addresses), 100):
+            chunk = addresses[i : i + 100]
+            res = await self.call(
+                "getMultipleAccounts",
+                [chunk, {"encoding": "base64", "dataSlice": {"offset": 0, "length": 0}, "commitment": "confirmed"}],
+            )
+            out.extend(res["value"])
+        return out
+
     async def get_balance(self, address: str) -> int:
         res = await self.call("getBalance", [address, {"commitment": "confirmed"}])
         return int(res["value"])

@@ -28,23 +28,52 @@ from .jupiter import JupiterClient, NoRouteError
 from .listener import WalletListener
 from .notifier import Notifier
 from .risk_config import RiskManager
-from .safety_gate import GateResult, SafetyGate
+from .safety_gate import GateResult, SafetyGate, WalletProfile
 from .solana_rpc import SolanaRpc
-from .state import Position, PositionStatus, StateStore, TradeJournal
+from .state import Position, PositionStatus, StateStore, TradeJournal, save_json
 from .tx_parser import Side, SwapEvent, extract_swaps, parse_balances
 
 log = logging.getLogger(__name__)
 
 
-def load_approved_wallets(path: Path) -> list[str]:
+def load_approved_wallets(path: Path) -> dict[str, WalletProfile]:
     if not path.exists():
         raise FileNotFoundError(f"{path} not found — run `python main.py score` first")
     data = json.loads(path.read_text())
     rows = data.get("wallets", data) if isinstance(data, dict) else data
-    wallets = [r["address"] if isinstance(r, dict) else str(r) for r in rows]
-    if not wallets:
+    profiles: dict[str, WalletProfile] = {}
+    for r in rows:
+        if isinstance(r, dict):
+            profiles[r["address"]] = WalletProfile(
+                r["address"], float(r.get("median_buy_sol") or 0.0), r.get("link_group")
+            )
+        else:
+            profiles[str(r)] = WalletProfile(str(r))
+    if not profiles:
         raise ValueError(f"{path} contains no wallets")
-    return wallets
+    return profiles
+
+
+def quarantine_in_file(path: Path, wallet: str, reason: str) -> None:
+    """Move a wallet from `wallets` to `quarantined` so re-scoring never approves it again."""
+    if not path.exists():
+        return
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict):
+        data = {"wallets": data}
+    keep, moved = [], None
+    for r in data.get("wallets", []):
+        addr = r["address"] if isinstance(r, dict) else str(r)
+        if addr == wallet:
+            moved = r
+        else:
+            keep.append(r)
+    data["wallets"] = keep
+    q = data.setdefault("quarantined", [])
+    if not any(e.get("address") == wallet for e in q):
+        score = moved.get("score") if isinstance(moved, dict) else None
+        q.append({"address": wallet, "reason": reason, "at": int(time.time()), "score": score})
+    save_json(path, data)
 
 
 def sol(lamports: float) -> str:
@@ -79,6 +108,8 @@ class CopyEngine:
         self._entry_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()
         self.wallets: list[str] = []
+        self.profiles: dict[str, WalletProfile] = {}
+        self.recent_buys: dict[str, dict[str, float]] = {}  # mint -> wallet -> buy time
 
     def spawn(self, coro) -> asyncio.Task:
         """Fire-and-forget with a strong reference (the event loop only keeps weak ones)."""
@@ -125,11 +156,55 @@ class CopyEngine:
             pos.whale_balance_raw = parsed.token_post[pos.mint]
             pos.whale_peak_balance_raw = max(pos.whale_peak_balance_raw, pos.whale_balance_raw)
             if pos.whale_sold_frac >= self.s.exits.whale_sell_trigger_frac:
+                self._check_fast_dump(pos, tx.get("blockTime") or time.time())
                 # Front-run the rest of the whale's exit: evaluate right now, not on the next tick.
                 self.spawn(self.exits.evaluate(pos))
 
+    def _check_fast_dump(self, pos: Position, dump_time: float) -> None:
+        """A whale that dumps within seconds of its own buy used its public wallet as bait.
+        Two strikes and it is quarantined as a copy-trader hunter."""
+        if pos.fast_dump_checked or pos.whale_entry_time is None:
+            return
+        pos.fast_dump_checked = True
+        held = dump_time - pos.whale_entry_time
+        if held > self.s.exits.fast_dump_window_s:
+            return
+        strikes = self.store.state.hunter_strikes.get(pos.whale, 0) + 1
+        self.store.state.hunter_strikes[pos.whale] = strikes
+        log.warning("whale %s dumped %.0fs after its buy (strike %d)", pos.whale[:6], held, strikes)
+        if strikes >= self.s.exits.quarantine_strikes and pos.whale not in self.store.state.quarantined:
+            self.store.state.quarantined.append(pos.whale)
+            reason = f"{strikes} dumps within {self.s.exits.fast_dump_window_s:.0f}s of its own buy"
+            quarantine_in_file(self.s.approved_wallets_path, pos.whale, reason)
+            self.spawn(self.notifier.send(f"🚫 QUARANTINED {pos.whale}: copy-trader hunter ({reason})",
+                                          level=logging.WARNING))
+
     # ---- entries -----------------------------------------------------------------------
+    def _record_buy_and_cluster(self, ev: SwapEvent) -> list[str]:
+        """Remember this approved-wallet buy and return the OTHER wallets, independent of it
+        (different link group), that bought the same token within the cluster window. An
+        already-open position on that token is upgraded to HIGH_CONVICTION_CLUSTER."""
+        now = float(ev.block_time or time.time())
+        window = self.s.safety.cluster_window_s
+        for mint in [m for m, b in self.recent_buys.items() if max(b.values()) < now - window]:
+            del self.recent_buys[mint]
+        buys = self.recent_buys.setdefault(ev.mint, {})
+        buys[ev.wallet] = now
+        me = self.profiles.get(ev.wallet, WalletProfile(ev.wallet))
+        others = [
+            w for w, t in buys.items()
+            if now - t <= window and me.independent_of(self.profiles.get(w, WalletProfile(w)))
+        ]
+        for pos in self.store.state.open_positions():
+            if pos.mint == ev.mint and not pos.high_conviction and pos.whale in others:
+                pos.high_conviction = True
+                pos.cluster_wallets = sorted({pos.whale, ev.wallet})
+                log.info("HIGH_CONVICTION_CLUSTER %s: independent wallets %s",
+                         pos.symbol or pos.mint[:8], [w[:6] for w in pos.cluster_wallets])
+        return others
+
     async def handle_buy(self, ev: SwapEvent) -> None:
+        cluster = self._record_buy_and_cluster(ev)
         pre = self.gate.precheck(ev)
         if pre:
             log.info("skip %s from %s: %s", ev.mint[:8], ev.wallet[:6], "; ".join(pre))
@@ -145,9 +220,9 @@ class CopyEngine:
             log.info("gate %s", gate.summary())
             if not gate.passed:
                 return
-            await self._enter(ev, sizing.lamports, gate)
+            await self._enter(ev, sizing.lamports, gate, cluster)
 
-    async def _enter(self, ev: SwapEvent, lamports: int, gate: GateResult) -> None:
+    async def _enter(self, ev: SwapEvent, lamports: int, gate: GateResult, cluster: list[str] | None = None) -> None:
         assert gate.buy_quote and gate.fee_budget
         fill = await self.executor.buy(ev.mint, lamports, gate.buy_quote, gate.fee_budget.max_priority_lamports)
         # The attempt counts against the 24h re-entry rule even if it failed.
@@ -184,6 +259,9 @@ class CopyEngine:
             stop_ratio=1 - self.s.exits.hard_stop_loss,
             whale_peak_balance_raw=ev.token_balance_after_raw,
             whale_balance_raw=ev.token_balance_after_raw,
+            whale_entry_time=float(ev.block_time) if ev.block_time else time.time(),
+            high_conviction=bool(cluster),
+            cluster_wallets=sorted(set(cluster) | {ev.wallet}) if cluster else [],
             entry_tx=fill.signature,
         )
         self.store.state.positions[pos.id] = pos
@@ -194,7 +272,8 @@ class CopyEngine:
                 "mint": pos.mint,
                 "symbol": pos.symbol,
                 "whale": pos.whale,
-                "reason": f"copy {ev.signature[:16]} chase={gate.chase_pct:+.2%} rt={gate.roundtrip_return - 1:+.2%}",
+                "reason": f"{'CLUSTER ' if pos.high_conviction else ''}copy {ev.signature[:16]} "
+                          f"chase={gate.chase_pct:+.2%} rt={gate.roundtrip_return - 1:+.2%}",
                 "sol_amount": f"{fill.lamports / LAMPORTS_PER_SOL:.6f}",
                 "token_amount_ui": f"{fill.token_raw / 10 ** pos.decimals:.6f}",
                 "price_lamports_per_raw": f"{pos.entry_price:.12g}",
@@ -323,7 +402,9 @@ class CopyEngine:
                      "".join(f"\n  - {describe(p)}" for p in opens))
 
     async def run(self) -> None:
-        self.wallets = load_approved_wallets(self.s.approved_wallets_path)
+        self.profiles = load_approved_wallets(self.s.approved_wallets_path)
+        self.gate.profiles = self.profiles
+        self.wallets = list(self.profiles)
         free = await self.executor.free_balance_lamports()
         self.risk.roll_day(self.risk.equity_lamports(free))
         self.save()

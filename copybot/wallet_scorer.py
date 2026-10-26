@@ -25,7 +25,7 @@ from pathlib import Path
 from solders.pubkey import Pubkey
 
 from .config import ScorerConfig, Settings
-from .constants import LAMPORTS_PER_SOL, USDC_MINT, WSOL_MINT
+from .constants import JITO_TIP_ACCOUNTS, LAMPORTS_PER_SOL, USDC_MINT, WSOL_MINT
 from .dexscreener import DexScreenerClient, token_created_at_ms
 from .jupiter import JupiterClient
 from .solana_rpc import SolanaRpc
@@ -42,6 +42,7 @@ class Cycle:
     mint: str
     opened_at: int
     sol_in: float = 0.0  # lamports
+    first_buy_sol: float = 0.0  # lamports of the opening buy: the size of the signal we would copy
     sol_out: float = 0.0
     buys: int = 0
     sells: int = 0
@@ -88,6 +89,16 @@ class WalletMetrics:
     trades_per_day: float = 0.0
     days_since_last_trade: float = 0.0
     total_pnl_sol: float = 0.0
+    nonscratch_median_roi: float = 0.0
+    trimmed_mean_roi: float = 0.0
+    median_buy_sol: float = 0.0  # baseline for live bait-size detection
+    replay_trades: int = 0
+    replay_win_rate: float = 0.0
+    replay_profit_factor: float = 0.0
+    replay_expectancy: float = 0.0  # mean net return per copied trade, after latency + fees
+    token_recipients: int = 0
+    counterparties: list[str] = field(default_factory=list)
+    link_group: int | None = None
     score: float = 0.0
     passed: bool = False
     rejections: list[str] = field(default_factory=list)
@@ -121,6 +132,7 @@ def build_cycles(
                     # by tokens bought outside our window.
                     if ev.token_balance_before_raw > DUST_FRAC * ev.token_balance_after_raw:
                         cyc.outcome = "contaminated"
+                    cyc.first_buy_sol = to_lamports(ev)
                     open_cycles[ev.mint] = cyc
                 cyc.sol_in += to_lamports(ev)
                 cyc.buys += 1
@@ -159,9 +171,13 @@ def compute_metrics(
     token_created_ms: dict[str, int],
     cfg: ScorerConfig,
     now: float | None = None,
+    counterparties: set[str] | None = None,
+    token_recipients: int = 0,
 ) -> WalletMetrics:
     now = now or time.time()
     m = WalletMetrics(address=address, txs_scanned=txs_scanned, history_days=round(history_days, 2))
+    m.counterparties = sorted(counterparties or ())
+    m.token_recipients = token_recipients
     for c in cycles:
         if c.outcome == "sold" and (c.sol_in < cfg.min_cycle_buy_sol * LAMPORTS_PER_SOL or c.roi > cfg.max_cycle_roi):
             c.outcome = "unpriced"
@@ -185,6 +201,17 @@ def compute_metrics(
         m.profit_factor = gross_win / gross_loss if gross_loss > 0 else (99.0 if gross_win > 0 else 0.0)
         m.top_trade_pnl_share = max(c.pnl for c in wins) / gross_win if gross_win > 0 else 0.0
         m.avg_buy_sol = statistics.fmean(c.sol_in for c in sold) / LAMPORTS_PER_SOL
+        m.median_buy_sol = statistics.median(c.first_buy_sol for c in sold) / LAMPORTS_PER_SOL
+        meaningful = [x for x in rois if abs(x) > cfg.scratch_band]
+        m.nonscratch_median_roi = statistics.median(meaningful) if meaningful else 0.0
+        m.trimmed_mean_roi = trimmed_mean(rois, cfg.trimmed_top_frac)
+        copied = replay_copy_returns(sold, cfg, m.median_buy_sol * LAMPORTS_PER_SOL)
+        m.replay_trades = len(copied)
+        if copied:
+            gains, losses = sum(x for x in copied if x > 0), -sum(x for x in copied if x < 0)
+            m.replay_win_rate = sum(1 for x in copied if x > 0) / len(copied)
+            m.replay_profit_factor = gains / losses if losses > 0 else (99.0 if gains > 0 else 0.0)
+            m.replay_expectancy = statistics.fmean(copied)
         m.total_pnl_sol = sum(c.pnl for c in sold) / LAMPORTS_PER_SOL
         last = max(c.closed_at or c.opened_at for c in sold)
         m.days_since_last_trade = (now - last) / 86400
@@ -217,8 +244,15 @@ def compute_metrics(
             r.append(f"avg hold {m.avg_hold_s:.0f}s < {cfg.min_avg_hold_s:.0f}s")
         if m.median_hold_s < cfg.min_median_hold_s:
             r.append(f"median hold {m.median_hold_s:.0f}s < {cfg.min_median_hold_s:.0f}s")
-        if m.median_roi < cfg.min_median_roi:
-            r.append(f"median ROI {m.median_roi:+.0%} < {cfg.min_median_roi:+.0%}")
+        roi_ok = m.nonscratch_median_roi >= cfg.min_median_roi or (
+            m.trimmed_mean_roi >= cfg.min_trimmed_mean_roi and m.profit_factor >= cfg.alt_min_profit_factor
+        )
+        if not roi_ok:
+            r.append(
+                f"typical trade too weak: non-scratch median ROI {m.nonscratch_median_roi:+.0%} "
+                f"(< {cfg.min_median_roi:+.0%}) and trimmed mean {m.trimmed_mean_roi:+.0%} / PF {m.profit_factor:.2f} "
+                f"(< {cfg.min_trimmed_mean_roi:+.0%} / {cfg.alt_min_profit_factor})"
+            )
         if m.profit_factor < cfg.min_profit_factor:
             r.append(f"profit factor {m.profit_factor:.2f} < {cfg.min_profit_factor}")
         if m.top_trade_pnl_share > cfg.max_top_trade_pnl_share:
@@ -231,8 +265,18 @@ def compute_metrics(
             r.append(f"{m.trades_per_day:.0f} trades/day (bot)")
         if m.days_since_last_trade > cfg.max_days_since_last_trade:
             r.append(f"inactive for {m.days_since_last_trade:.1f} days")
+        if m.replay_trades < cfg.replay_min_trades:
+            r.append(f"only {m.replay_trades} copyable trades to replay (< {cfg.replay_min_trades})")
+        elif m.replay_profit_factor < cfg.replay_min_profit_factor or m.replay_expectancy <= cfg.replay_min_expectancy:
+            r.append(
+                f"edge dies under copy latency: replay PF {m.replay_profit_factor:.2f} (< {cfg.replay_min_profit_factor}), "
+                f"expectancy {m.replay_expectancy:+.1%}/trade after {cfg.replay_entry_penalty:.1%} entry penalty "
+                f"+ {cfg.replay_leg_fee:.1%}/leg fees"
+            )
     if m.unpriced_ratio > cfg.max_unpriced_ratio:
         r.append(f"{m.unpriced_ratio:.0%} of trades paid off-wallet (bot vault) — buy signals uncopyable")
+    if m.token_recipients >= cfg.max_token_recipients:
+        r.append(f"shipped tokens to {m.token_recipients} different wallets without selling (feeder/sybil)")
     if m.transfer_out_ratio > cfg.max_transfer_out_ratio:
         r.append(f"{m.transfer_out_ratio:.0%} of exits were transfers to other wallets (insider/bundler)")
 
@@ -241,18 +285,43 @@ def compute_metrics(
     return m
 
 
+def trimmed_mean(values: list[float], top_frac: float) -> float:
+    """Mean after dropping the top `top_frac` of values (the lottery tickets)."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    drop = int(len(ordered) * top_frac)
+    kept = ordered[: len(ordered) - drop] if drop else ordered
+    return statistics.fmean(kept)
+
+
+def copy_return(whale_roi: float, cfg: ScorerConfig) -> float:
+    """What a whale trade returns to US: we enter `replay_entry_penalty` worse (copy latency,
+    other bots ahead of us), pay our full per-leg fee cap on both legs, optional exit penalty."""
+    fee = 1.0 - cfg.replay_leg_fee
+    return (1.0 + whale_roi) * fee * fee * (1.0 - cfg.replay_exit_penalty) / (1.0 + cfg.replay_entry_penalty) - 1.0
+
+
+def replay_copy_returns(sold: list[Cycle], cfg: ScorerConfig, median_buy_lamports: float) -> list[float]:
+    """Latency-adjusted replay over the trades our live gate would actually have copied:
+    opening buy >= the gate's minimum and not a bait-sized outlier for this wallet."""
+    floor = max(cfg.replay_min_buy_sol * LAMPORTS_PER_SOL, cfg.bait_size_frac * median_buy_lamports)
+    return [copy_return(c.roi, cfg) for c in sold if c.first_buy_sol >= floor]
+
+
 def _clip(x: float) -> float:
     return max(0.0, min(1.0, x))
 
 
 def score_wallet(m: WalletMetrics) -> float:
-    """0-100. Rewards a robust *typical* trade (median ROI) and consistency over raw PnL."""
+    """0-100. Ranks on what WE would earn copying (replay), then robustness and consistency."""
     return 100 * (
-        0.35 * _clip(m.median_roi / 0.60)
-        + 0.25 * _clip((m.profit_factor - 1.0) / 3.0)
-        + 0.15 * _clip((m.win_rate - 0.5) / 0.32)
-        + 0.10 * _clip(m.closed_trades / 80)
-        + 0.10 * _clip(m.median_hold_s / 1800)
+        0.35 * _clip(m.replay_expectancy / 0.25)
+        + 0.25 * _clip((m.replay_profit_factor - 1.0) / 2.0)
+        + 0.10 * _clip(m.nonscratch_median_roi / 0.60)
+        + 0.10 * _clip((m.win_rate - 0.5) / 0.32)
+        + 0.10 * _clip(m.replay_trades / 60)
+        + 0.05 * _clip(m.median_hold_s / 1800)
         + 0.05 * _clip(1 - m.sniper_ratio / 0.3)
     )
 
@@ -299,6 +368,30 @@ class WalletScorer:
             path.write_text(json.dumps(tx, separators=(",", ":")))
         return tx
 
+    async def history(self, wallet: str, sigs: list[dict], usd_per_sol: float) -> tuple[list[Cycle], set[str], set[str]]:
+        """Trade cycles plus link evidence: (cycles, SOL counterparties, token recipients)."""
+        txs = await asyncio.gather(*(self.transaction(r["signature"]) for r in sigs))
+        events: list[tuple[int, int, str, object]] = []
+        sol_links: set[str] = set()
+        recipients: set[str] = set()
+        min_link = int(self.cfg.min_link_sol * LAMPORTS_PER_SOL)
+        for tx in txs:
+            if not tx or not tx.get("blockTime"):
+                continue
+            t, slot = int(tx["blockTime"]), int(tx.get("slot", 0))
+            swaps = extract_swaps(tx, wallet)
+            for ev in swaps:
+                events.append((t, slot, "swap", ev))
+            moved = extract_transfers_out(tx, wallet)
+            for mint, amount in moved.items():
+                after = _post_balance(tx, wallet, mint)
+                events.append((t, slot, "xfer", (mint, amount, after)))
+                recipients |= token_recipients(tx, wallet, mint)
+            if not swaps:  # router fees inside swaps are not relationships
+                sol_links |= sol_counterparties(tx, wallet, min_link)
+        events.sort(key=lambda e: (e[0], e[1]))
+        return build_cycles(events, usd_per_sol), sol_links, recipients
+
     async def score(self, wallet: str, usd_per_sol: float) -> WalletMetrics:
         sigs = await self.signatures(wallet)
         times = [r["blockTime"] for r in sigs if r.get("blockTime")]
@@ -307,19 +400,7 @@ class WalletScorer:
             # Pools, routers and HFT bots: reject before spending thousands of RPC calls on them.
             return compute_metrics(wallet, [], txs_scanned=len(sigs), history_days=history_days,
                                    token_created_ms={}, cfg=self.cfg)
-        txs = await asyncio.gather(*(self.transaction(r["signature"]) for r in sigs))
-        events: list[tuple[int, int, str, object]] = []
-        for tx in txs:
-            if not tx or not tx.get("blockTime"):
-                continue
-            t, slot = int(tx["blockTime"]), int(tx.get("slot", 0))
-            for ev in extract_swaps(tx, wallet):
-                events.append((t, slot, "swap", ev))
-            for mint, amount in extract_transfers_out(tx, wallet).items():
-                after = _post_balance(tx, wallet, mint)
-                events.append((t, slot, "xfer", (mint, amount, after)))
-        events.sort(key=lambda e: (e[0], e[1]))
-        cycles = build_cycles(events, usd_per_sol)
+        cycles, sol_links, recipients = await self.history(wallet, sigs, usd_per_sol)
 
         winners = sorted({c.mint for c in cycles if c.outcome == "sold" and c.pnl > 0})
         created: dict[str, int] = {}
@@ -333,8 +414,67 @@ class WalletScorer:
             except Exception as exc:
                 log.warning("token launch times unavailable (%s); sniper check skipped for %s", exc, wallet[:6])
         return compute_metrics(
-            wallet, cycles, txs_scanned=len(sigs), history_days=history_days, token_created_ms=created, cfg=self.cfg
+            wallet, cycles, txs_scanned=len(sigs), history_days=history_days, token_created_ms=created, cfg=self.cfg,
+            counterparties=sol_links | recipients, token_recipients=len(recipients),
         )
+
+
+def _all_instructions(tx: dict) -> list[dict]:
+    out = list(tx["transaction"]["message"].get("instructions") or [])
+    for inner in (tx.get("meta") or {}).get("innerInstructions") or []:
+        out.extend(inner.get("instructions") or [])
+    return out
+
+
+def sol_counterparties(tx: dict, wallet: str, min_lamports: int) -> set[str]:
+    """Wallets that sent SOL to / received SOL from `wallet` directly (funding links)."""
+    out: set[str] = set()
+    for ix in _all_instructions(tx):
+        parsed = ix.get("parsed") if isinstance(ix, dict) else None
+        if ix.get("program") != "system" or not isinstance(parsed, dict) or parsed.get("type") != "transfer":
+            continue
+        info = parsed.get("info") or {}
+        if int(info.get("lamports", 0)) < min_lamports:
+            continue
+        src, dst = info.get("source"), info.get("destination")
+        other = dst if src == wallet else src if dst == wallet else None
+        if other and other not in JITO_TIP_ACCOUNTS:
+            out.add(other)
+    return out
+
+
+def token_recipients(tx: dict, wallet: str, mint: str) -> set[str]:
+    """Owners whose balance of `mint` grew in a tx where `wallet` shipped it out."""
+    meta = tx["meta"]
+    pre: dict[str, int] = {}
+    post: dict[str, int] = {}
+    for rows, acc in ((meta.get("preTokenBalances") or [], pre), (meta.get("postTokenBalances") or [], post)):
+        for row in rows:
+            if row.get("mint") == mint and row.get("owner") and row["owner"] != wallet:
+                acc[row["owner"]] = acc.get(row["owner"], 0) + int(row["uiTokenAmount"]["amount"])
+    return {o for o, amt in post.items() if amt > pre.get(o, 0)}
+
+
+def link_groups(metrics: list[WalletMetrics]) -> dict[str, int]:
+    """Union-find over direct SOL/token links between scored wallets. Wallets in one group are
+    treated as one operator: only one may be approved, and they never count as independent
+    confirmation for each other in cluster consensus."""
+    addrs = {m.address for m in metrics}
+    parent = {a: a for a in addrs}
+
+    def find(a: str) -> str:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for m in metrics:
+        for other in m.counterparties:
+            if other in addrs:
+                parent[find(m.address)] = find(other)
+    roots = sorted({find(a) for a in addrs})
+    ids = {r: i for i, r in enumerate(roots)}
+    return {a: ids[find(a)] for a in addrs}
 
 
 def _post_balance(tx: dict, wallet: str, mint: str) -> int:
@@ -363,6 +503,37 @@ def read_seed_wallets(path: Path) -> list[str]:
     return out
 
 
+def read_quarantined(path: Path) -> list[dict]:
+    """Wallets the live engine quarantined as copy-trader hunters survive every re-score."""
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text())
+    return data.get("quarantined", []) if isinstance(data, dict) else []
+
+
+def select_approved(results: list[WalletMetrics], top_n: int, quarantined: set[str]) -> list[WalletMetrics]:
+    """Best passing wallet per link group (one operator = one slot), never a quarantined one."""
+    groups = link_groups(results)
+    for m in results:
+        m.link_group = groups.get(m.address)
+    # A quarantined hunter taints its whole link group: its sibling wallets are the same operator.
+    tainted = {groups[a] for a in quarantined if a in groups}
+    approved: list[WalletMetrics] = []
+    taken: dict[int, str] = {}
+    for m in sorted((m for m in results if m.passed), key=lambda m: m.score, reverse=True):
+        if m.address in quarantined or m.link_group in tainted:
+            m.passed = False
+            m.rejections.append("quarantined copy-trader hunter (or linked to one)")
+            continue
+        if m.link_group in taken:
+            m.passed = False
+            m.rejections.append(f"same operator as approved {taken[m.link_group][:8]}… (direct SOL/token links)")
+            continue
+        taken[m.link_group] = m.address
+        approved.append(m)
+    return approved[:top_n]
+
+
 async def run_scorer(settings: Settings, rpc: SolanaRpc, dex: DexScreenerClient, jupiter: JupiterClient) -> list[WalletMetrics]:
     wallets = read_seed_wallets(settings.seed_wallets_path)
     log.info("scoring %d candidate wallets over %d days", len(wallets), settings.scorer.lookback_days)
@@ -378,19 +549,31 @@ async def run_scorer(settings: Settings, rpc: SolanaRpc, dex: DexScreenerClient,
             continue
         verdict = f"PASS score={m.score:.1f}" if m.passed else "REJECT: " + "; ".join(m.rejections[:3])
         log.info(
-            "[%d/%d] %s… trades=%d win=%.0f%% medROI=%+.0f%% medHold=%.0fm PF=%.2f | %s",
-            i, len(wallets), w[:8], m.closed_trades, m.win_rate * 100, m.median_roi * 100,
-            m.median_hold_s / 60, m.profit_factor, verdict,
+            "[%d/%d] %s… trades=%d win=%.0f%% nsMedROI=%+.0f%% medHold=%.0fm PF=%.2f | replay n=%d PF=%.2f exp=%+.1f%% | %s",
+            i, len(wallets), w[:8], m.closed_trades, m.win_rate * 100, m.nonscratch_median_roi * 100,
+            m.median_hold_s / 60, m.profit_factor, m.replay_trades, m.replay_profit_factor,
+            m.replay_expectancy * 100, verdict,
         )
         results.append(m)
 
-    approved = sorted((m for m in results if m.passed), key=lambda m: m.score, reverse=True)[: settings.scorer.top_n]
+    quarantined = read_quarantined(settings.approved_wallets_path)
+    approved = select_approved(results, settings.scorer.top_n, {q["address"] for q in quarantined})
     save_json(
         settings.approved_wallets_path,
         {
             "generated_at": int(time.time()),
             "lookback_days": settings.scorer.lookback_days,
-            "wallets": [{"address": m.address, "score": m.score, "metrics": asdict(m)} for m in approved],
+            "wallets": [
+                {
+                    "address": m.address,
+                    "score": m.score,
+                    "median_buy_sol": round(m.median_buy_sol, 4),
+                    "link_group": m.link_group,
+                    "metrics": asdict(m),
+                }
+                for m in approved
+            ],
+            "quarantined": quarantined,
         },
     )
     save_json(settings.data_dir / "scorer_report.json", [asdict(m) for m in results])

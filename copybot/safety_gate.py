@@ -29,6 +29,20 @@ from .tx_parser import Side, SwapEvent
 log = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class WalletProfile:
+    """What the scorer learned about an approved wallet, used by the live adversarial checks."""
+
+    address: str
+    median_buy_sol: float = 0.0
+    link_group: int | None = None
+
+    def independent_of(self, other: "WalletProfile") -> bool:
+        if self.address == other.address:
+            return False
+        return self.link_group is None or other.link_group is None or self.link_group != other.link_group
+
+
 @dataclass
 class GateResult:
     passed: bool
@@ -98,6 +112,7 @@ class SafetyGate:
         self.entry_slippage_bps = entry_slippage_bps
         self.sol_price = SolPriceCache(jupiter)
         self._mint_cache: dict[str, MintInfo] = {}
+        self.profiles: dict[str, WalletProfile] = {}
 
     async def mint_info(self, mint: str) -> MintInfo:
         cached = self._mint_cache.get(mint)
@@ -121,6 +136,16 @@ class SafetyGate:
         reasons: list[str] = []
         if ev.side is not Side.BUY:
             reasons.append("not a buy")
+        if ev.wallet in self.state.quarantined:
+            reasons.append("wallet quarantined (copy-trader hunter)")
+        profile = self.profiles.get(ev.wallet)
+        if profile and profile.median_buy_sol > 0 and ev.is_sol_quoted:
+            size = ev.quote_amount_raw / LAMPORTS_PER_SOL
+            if size < self.cfg.bait_size_frac * profile.median_buy_sol:
+                reasons.append(
+                    f"BAIT: {size:.3f} SOL buy is < {self.cfg.bait_size_frac:.0%} of this wallet's "
+                    f"median {profile.median_buy_sol:.2f} SOL (inducement / shadow-wallet dump setup)"
+                )
         if ev.mint in NON_MEME_MINTS:
             reasons.append("not a memecoin (quote/LST/major)")
         last = self.state.last_entry_by_mint.get(ev.mint)

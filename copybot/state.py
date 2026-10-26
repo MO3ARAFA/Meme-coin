@@ -57,6 +57,11 @@ class Position(BaseModel):
 
     whale_peak_balance_raw: int = 0
     whale_balance_raw: int = 0
+    whale_entry_time: float | None = None  # block time of the copied buy
+    fast_dump_checked: bool = False
+    # HIGH_CONVICTION_CLUSTER: another independent approved wallet bought within the window.
+    high_conviction: bool = False
+    cluster_wallets: list[str] = Field(default_factory=list)
 
     status: PositionStatus = PositionStatus.OPEN
     closed_at: float | None = None
@@ -97,6 +102,8 @@ class BotState(BaseModel):
     halted_until: float = 0.0
     shadow_balance_lamports: int | None = None
     last_signature_by_wallet: dict[str, str] = Field(default_factory=dict)
+    hunter_strikes: dict[str, int] = Field(default_factory=dict)  # fast dumps after own buy
+    quarantined: list[str] = Field(default_factory=list)
     seen_signatures: list[str] = Field(default_factory=list)
 
     def open_positions(self) -> list[Position]:

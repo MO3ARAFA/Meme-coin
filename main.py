@@ -2,6 +2,7 @@
 """copybot CLI.
 
   python main.py doctor                 # check config + connectivity (RPC, WS, Jupiter, DexScreener)
+  python main.py harvest                # find multi-token winners -> seed_wallets.txt
   python main.py score                  # Module A: seed_wallets.txt -> approved_wallets.json
   python main.py check-token <MINT>     # run the Module B safety gate on any token, right now
   python main.py run                    # copy-trade approved wallets (SHADOW_PAPER by default)
@@ -98,6 +99,20 @@ async def cmd_score(s: Settings) -> int:
     return 0 if any(m.passed for m in results) else 2
 
 
+async def cmd_harvest(s: Settings) -> int:
+    from copybot.dexscreener import DexScreenerClient
+    from copybot.harvester import run_harvest
+    from copybot.jupiter import JupiterClient
+    from copybot.solana_rpc import SolanaRpc
+
+    async with make_client() as client:
+        rpc = SolanaRpc(client, s.rpc_url, s.rpc_rps)
+        dex = DexScreenerClient(client, s.dexscreener_base_url, s.dexscreener_rps)
+        jup = JupiterClient(client, s.jupiter_base_url, s.jupiter_api_key, s.jupiter_rps)
+        winners = await run_harvest(s, client, rpc, dex, jup)
+    return 0 if winners else 2
+
+
 async def cmd_check_token(s: Settings, mint: str, size_sol: float) -> int:
     """Gate a token as if a whale had just bought it at the current price."""
     from copybot.copy_engine import CopyEngine
@@ -161,6 +176,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("doctor")
+    sub.add_parser("harvest")
     sub.add_parser("score")
     ct = sub.add_parser("check-token")
     ct.add_argument("mint")
@@ -179,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.cmd == "doctor":
             return asyncio.run(cmd_doctor(s))
+        if args.cmd == "harvest":
+            return asyncio.run(cmd_harvest(s))
         if args.cmd == "score":
             return asyncio.run(cmd_score(s))
         if args.cmd == "check-token":

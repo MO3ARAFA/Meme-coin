@@ -194,12 +194,36 @@ the fresh quote, a slow gate makes the bot *skip*, never *overpay*.
 
 ---
 
+## C2. Findings from scoring real wallets (Oct 2026)
+
+- **Vault-funded buys.** Some trading-bot programs (seen: `proVF4…`) pay for buys from a
+  program-held deposit vault, so the wallet's SOL barely moves. The buy parses as nearly free,
+  and the sell as a 130,000x. Cycles bought for < 0.01 SOL or returning > 20x are now
+  *unpriced*: excluded from stats, and the wallet is rejected if > 25% of its exits are unpriced
+  (its buy signals carry no usable price for the copy engine either).
+- **A high whale PF is not a copyable edge.** A wallet with 187 trades, 65% win rate and PF
+  2.17 replayed at **−2.7%/trade** for a copier (replay win rate 28%, PF 0.44). Its PF was
+  size-weighted on a few big trades. Its typical trade (+2–5%) is smaller than our latency +
+  fee cost. Only the replay exposes this.
+- **Recent pool transactions are mostly bots.** 17 of 30 wallets sampled from the latest pool
+  activity did 300–470 tx/day. `harvest` samples evenly across thousands of signatures,
+  requires a system-owned account (pools and vaults are program-owned), ≤ 80 tx/day, and
+  realized profit in ≥ 2 different tokens.
+- **The supply of fresh liquid memecoins is small.** On a given day, only ~13 Solana tokens
+  are 1–14 days old with ≥ $40k liquidity and ≥ $100k volume (GeckoTerminal + DexScreener).
+  About 50 requires an age window of ~120 days (`HARVEST__MAX_AGE_DAYS`).
+
 ## D. What remains unsolved (be honest with yourself)
 
 - **Structural latency.** You are always 1–3 slots behind the whale. The edge must survive
   that. Shadow mode measures exactly this; nothing else can.
-- **Copier-baiting.** Good wallets that notice they are copied can start farming copiers. Re-score
-  weekly and prune by your own per-wallet shadow PnL (`report` shows it).
+- **Copier-baiting.** Bait-size detection and auto-quarantine catch the crude versions. A
+  patient hunter that keeps normal sizes and holds 3+ minutes before dumping looks like a
+  normal trader. Re-score weekly and prune by your own per-wallet shadow PnL (`report` shows it).
+- **The replay has no price path.** It re-prices the whale's own exit, not our independent exit
+  engine (stops, trail, time decay). It is a necessary filter, not a backtest of our exits.
+- **Sybil links are direct links only.** Two wallets funded from the same CEX, or linked through
+  an intermediate wallet, are not detected.
 - **Scorer survivorship.** Seeds come from leaderboards of tokens that *went up*. The filters
   reduce, but cannot remove, that bias.
 - **LP burn and holder concentration** are not checked yet. PumpSwap migrations burn LP, but
