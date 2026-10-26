@@ -63,6 +63,8 @@ class Position(BaseModel):
     high_conviction: bool = False
     cluster_wallets: list[str] = Field(default_factory=list)
     tier: str = "SOLO"  # SOLO | CLUSTER
+    size_tier: str = "base"  # CFO meritocracy: merit | base | probation
+    dex_leg_cost: float = 0.0  # DEX fee + impact per leg, from the entry round trip (CFO friction)
     eject_reason: str = ""  # set by the post-buy overwatch -> immediate full exit
     whale_slot: int = 0
 

@@ -7,6 +7,9 @@
   python main.py check-token <MINT>     # run the Module B safety gate on any token, right now
   python main.py run                    # copy-trade approved wallets (SHADOW_PAPER by default)
   python main.py report                 # shadow PnL stats + LIVE-readiness gate
+  python main.py cfo                    # treasury statement: flows, friction, meritocracy, locked reserve
+  python main.py evolve                 # run one bounded AI/rules tuning round now
+  python main.py radar [--expand]       # social/narrative radar; --expand queues early profitable traders
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ def setup_logging(verbose: bool) -> None:
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    for noisy in ("httpx", "httpcore", "httpx2", "httpcore2", "websockets"):
+    for noisy in ("httpx", "httpcore", "httpx2", "httpcore2", "websockets", "anthropic"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
@@ -91,7 +94,7 @@ async def cmd_doctor(s: Settings) -> int:
     return 0 if ok else 1
 
 
-async def cmd_score(s: Settings) -> int:
+async def cmd_score(s: Settings, with_queue: bool = False) -> int:
     from copybot.dexscreener import DexScreenerClient
     from copybot.jupiter import JupiterClient
     from copybot.solana_rpc import SolanaRpc
@@ -101,6 +104,13 @@ async def cmd_score(s: Settings) -> int:
         rpc = SolanaRpc(client, s.rpc_url, s.rpc_rps)
         dex = DexScreenerClient(client, s.dexscreener_base_url, s.dexscreener_rps)
         jup = JupiterClient(client, s.jupiter_base_url, s.jupiter_api_key, s.jupiter_rps)
+        if with_queue:
+            queue = s.data_dir / "score_queue.txt"
+            if queue.exists():
+                merged = s.data_dir / "seed_wallets_with_queue.txt"
+                base = s.seed_wallets_path.read_text() if s.seed_wallets_path.exists() else ""
+                merged.write_text(base + "\n" + queue.read_text())
+                s.seed_wallets_path = merged
         results = await run_scorer(s, rpc, dex, jup)
     return 0 if any(m.passed for m in results) else 2
 
@@ -176,6 +186,61 @@ async def cmd_run(s: Settings, force_live: bool) -> int:
     return 0
 
 
+async def cmd_cfo(s: Settings) -> int:
+    from copybot.state import StateStore
+    from copybot.treasury_cfo import TreasuryCFO
+
+    ledger = s.data_dir / ("live_treasury_ledger.json" if s.is_live else "treasury_ledger.json")
+    cfo = TreasuryCFO(s.treasury, ledger, s.execution_mode.value)
+    store = StateStore(s.state_path)
+    equity = None
+    if not s.is_live and store.state.shadow_balance_lamports is not None:
+        equity = store.state.shadow_balance_lamports + sum(
+            p.cost_basis_lamports + p.rent_lamports for p in store.state.open_positions())
+    print(cfo.statement(equity))
+    return 0
+
+
+async def cmd_evolve(s: Settings) -> int:
+    from copybot.ai_analyst import AIAnalyst
+    from copybot.self_improver import RegretTracker, RuntimeOverrides, evolve
+    from copybot.state import TradeJournal
+    from copybot.treasury_cfo import TreasuryCFO
+
+    ledger = s.data_dir / ("live_treasury_ledger.json" if s.is_live else "treasury_ledger.json")
+    cfo = TreasuryCFO(s.treasury, ledger, s.execution_mode.value)
+    regret = RegretTracker(s.data_dir / "regret.json", s.evolve.regret_checks_min)
+    overrides = RuntimeOverrides(s.data_dir / "runtime_overrides.json", s)
+    overrides.maybe_reload(cfo)
+    analyst = AIAnalyst(s.llm)
+    await analyst.probe()
+    print(f"AI tuner: {analyst.status}")
+    closes = [r for r in TradeJournal(s.trades_csv).read() if r.get("event") == "EXIT"]
+    doc = await evolve(s, cfo, regret, overrides, analyst, closes, s.data_dir / "evolution_log.jsonl")
+    cfo.save()
+    print(json.dumps(doc, indent=2))
+    print("written to", s.data_dir / "runtime_overrides.json", "(a running bot hot-reloads it within seconds)")
+    return 0
+
+
+async def cmd_radar(s: Settings, expand: bool) -> int:
+    from copybot.ai_analyst import AIAnalyst
+    from copybot.dexscreener import DexScreenerClient
+    from copybot.jupiter import JupiterClient
+    from copybot.social_radar import run_radar
+    from copybot.solana_rpc import SolanaRpc
+
+    analyst = AIAnalyst(s.llm)
+    await analyst.probe()
+    log.info("narrative AI: %s", analyst.status)
+    async with make_client() as client:
+        rpc = SolanaRpc(client, s.rpc_url, s.rpc_rps)
+        dex = DexScreenerClient(client, s.dexscreener_base_url, s.dexscreener_rps)
+        jup = JupiterClient(client, s.jupiter_base_url, s.jupiter_api_key, s.jupiter_rps)
+        await run_radar(s, client, rpc, dex, jup, analyst, expand=expand)
+    return 0
+
+
 def cmd_report(s: Settings) -> int:
     rows = TradeJournal(s.trades_csv).read()
     print(format_report(build_report(rows, s.shadow_starting_sol, s.live_gate)))
@@ -191,7 +256,8 @@ def main(argv: list[str] | None = None) -> int:
     hv.add_argument("--co-buyers", action="store_true",
                     help="discover wallets that bought approved whales' winners BEFORE them")
     hv.add_argument("--seed", action="append", help="seed wallet for --co-buyers (default: approved wallets)")
-    sub.add_parser("score")
+    sc = sub.add_parser("score")
+    sc.add_argument("--with-queue", action="store_true", help="also score wallets queued by `radar --expand`")
     ct = sub.add_parser("check-token")
     ct.add_argument("mint")
     ct.add_argument("--size-sol", type=float, default=0.1)
@@ -203,6 +269,10 @@ def main(argv: list[str] | None = None) -> int:
         help="start LIVE even though the shadow record fails the readiness gate (not recommended)",
     )
     sub.add_parser("report")
+    sub.add_parser("cfo")
+    sub.add_parser("evolve")
+    rd = sub.add_parser("radar")
+    rd.add_argument("--expand", action="store_true", help="harvest early profitable traders into data/score_queue.txt")
     args = ap.parse_args(argv)
     setup_logging(args.verbose)
     s = load_settings()
@@ -212,13 +282,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "harvest":
             return asyncio.run(cmd_harvest(s, args.co_buyers, args.seed))
         if args.cmd == "score":
-            return asyncio.run(cmd_score(s))
+            return asyncio.run(cmd_score(s, args.with_queue))
         if args.cmd == "check-token":
             return asyncio.run(cmd_check_token(s, args.mint, args.size_sol))
         if args.cmd == "run":
             return asyncio.run(cmd_run(s, args.force_live))
         if args.cmd == "report":
             return cmd_report(s)
+        if args.cmd == "cfo":
+            return asyncio.run(cmd_cfo(s))
+        if args.cmd == "evolve":
+            return asyncio.run(cmd_evolve(s))
+        if args.cmd == "radar":
+            return asyncio.run(cmd_radar(s, args.expand))
     except KeyboardInterrupt:
         log.info("stopped")
         return 130

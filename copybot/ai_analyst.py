@@ -10,7 +10,8 @@ Design rules (the model is an analyst, not a trader):
     keeps running on its quantitative rules.
 
 Uses the official `anthropic` SDK (optional dependency: `pip install -r requirements-ai.txt`),
-pointed at `LLM__BASE_URL` when set (any Anthropic-compatible endpoint).
+pointed at `LLM__BASE_URL` / `ANTHROPIC_BASE_URL` when set (any Anthropic-compatible endpoint
+or router; a trailing `/v1` is accepted).
 """
 
 from __future__ import annotations
@@ -79,9 +80,10 @@ class AIAnalyst:
             return None
         self._sdk = anthropic
         self._client = anthropic.AsyncAnthropic(
-            api_key=self.cfg.api_key, base_url=self.cfg.base_url or None, timeout=self.cfg.timeout_s, max_retries=1
+            api_key=self.cfg.api_key, base_url=self.cfg.sdk_base_url, timeout=self.cfg.timeout_s, max_retries=1
         )
-        candidates = [self.cfg.model] if self.cfg.model else list(self.cfg.probe_models)
+        # Preferred model first (MODEL_ID / LLM__MODEL), then the highest available one.
+        candidates = list(dict.fromkeys(([self.cfg.model] if self.cfg.model else []) + list(self.cfg.probe_models)))
         for model in candidates:
             try:
                 await self._client.messages.create(
@@ -104,7 +106,7 @@ class AIAnalyst:
         self.status = f"none of the probed models is served: {candidates}"
         return None
 
-    async def _ask(self, system: str, payload: dict[str, Any], max_tokens: int = 2000) -> dict | None:
+    async def ask(self, system: str, payload: dict[str, Any], max_tokens: int = 2000) -> dict | None:
         if not self.available:
             return None
         try:
@@ -123,7 +125,7 @@ class AIAnalyst:
         return _extract_json(text)
 
     async def judge_wallet(self, metrics: dict[str, Any]) -> dict | None:
-        out = await self._ask(JUDGE_SYSTEM, {"wallet_metrics": metrics})
+        out = await self.ask(JUDGE_SYSTEM, {"wallet_metrics": metrics})
         if not out or out.get("verdict") not in ("APPROVE", "REJECT"):
             return None
         try:
@@ -133,7 +135,7 @@ class AIAnalyst:
         return out
 
     async def overwatch(self, facts: dict[str, Any]) -> dict | None:
-        out = await self._ask(OVERWATCH_SYSTEM, {"position": facts}, max_tokens=800)
+        out = await self.ask(OVERWATCH_SYSTEM, {"position": facts}, max_tokens=800)
         if not out:
             return None
         try:

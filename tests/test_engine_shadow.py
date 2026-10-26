@@ -82,7 +82,7 @@ class FakeRpc:
 @pytest.fixture
 async def engine(tmp_path):
     s = Settings(_env_file=None, data_dir=tmp_path, approved_wallets_path=tmp_path / "a.json", shadow_starting_sol=1.0,
-                 shadow_latency_haircut_bps=75, llm={"overwatch_delay_s": 0.0})
+                 shadow_latency_haircut_bps=75, llm={"overwatch_delay_s": 0.0}, shield={"rugcheck": False})
     market, rpc = FakeMarket(price=500.0), FakeRpc()  # 500 lamports per raw unit
     async with make_client() as client:
         eng = CopyEngine(s, client)

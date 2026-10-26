@@ -56,3 +56,20 @@ def test_extract_json_and_brief_contains_no_secrets():
     assert _extract_json('x {"a": {"b": 1}} y') == {"a": {"b": 1}}
     brief = wallet_brief({"address": "W", "win_rate": 0.7, "api_key": "sk-secret", "counterparties": ["X"]})
     assert "api_key" not in brief and brief["address"] == "W"
+
+
+def test_key_and_base_url_always_come_from_the_same_source(tmp_path, monkeypatch):
+    """Regression: a process-level ANTHROPIC_BASE_URL must never be paired with the .env key."""
+    from copybot import config
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=router-key\nANTHROPIC_BASE_URL=http://localhost:20128/v1\nMODEL_ID=m\n")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://somewhere-else.example")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "env-key")
+    s = config.load_settings()
+    assert (s.llm.api_key, s.llm.base_url, s.llm.model) == ("router-key", "http://localhost:20128/v1", "m")
+    assert s.llm.sdk_base_url == "http://localhost:20128"  # SDK adds /v1/messages itself
+
+
+def test_empty_base_url_is_explicit_never_inherited():
+    assert LLMConfig(api_key="k").sdk_base_url == "https://api.anthropic.com"

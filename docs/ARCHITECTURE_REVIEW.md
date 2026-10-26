@@ -233,6 +233,18 @@ the fresh quote, a slow gate makes the bot *skip*, never *overpay*.
 | Co-buyers within ±15 min | Changed to **before** the whale only | Wallets buying right after a tracked whale are mostly copy-bots, the exact thing we avoid. |
 | Creator/deployer activity in the overwatch | Not implemented | Finding a token's deployer costs a full signature-history scan per token. Holders, liquidity and order flow are checked instead. |
 
+## C4. The four autonomous pillars: decisions
+
+| Proposal | Decision | Why |
+|---|---|---|
+| Kill switch: reject negative expected net profit | Adopted | EV uses the exit leg only, because our buy quote already contains the buy leg's fee and impact. Using the full round trip would double-count it. |
+| "Cabal-Hunter / RugRadar" APIs | Replaced by **RugCheck** + on-chain | No documented public APIs by those names. RugCheck is public and free (~360 ms), runs in parallel, and fails open. On-chain checks stay primary. |
+| Pump.fun KotH / migrated feeds | Replaced by GeckoTerminal PumpSwap pools | Pump.fun's APIs return a Cloudflare 403 to scripts. A migration creates a PumpSwap pool. |
+| Meritocracy 12% / probation 5% | Adopted (user override of the flat 10%) | Probation ends on the whale's next win. Merit needs PF ≥ 1.5 over ≥ 3 trades. |
+| High-water-mark lock | Adopted | The reserve is excluded from both spendable balance and the equity used for sizing. |
+| AI may update parameters | Adopted **within hard bounds** | Whitelist only. The risky side of each bound is the mandate value, moves are capped at 25% per round, hand edits are re-clamped on reload, whales can only be demoted, and size / mode / keys are never tunable. |
+| AI routing via a local router | Adopted | The key and base URL are resolved as a pair. Found during the build: this container's environment sets `ANTHROPIC_BASE_URL`, which was overriding `.env`. |
+
 ## D. What remains unsolved (be honest with yourself)
 
 - **Structural latency.** You are always 1–3 slots behind the whale. The edge must survive

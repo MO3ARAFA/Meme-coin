@@ -46,6 +46,10 @@ seed_wallets.txt ──► wallet_scorer ──► approved_wallets.json
 | `copybot/cabal_detector.py` | Same-tx bundles, co-slot cabals, holder concentration (pools/PDAs excluded) |
 | `copybot/ai_analyst.py` | Optional Claude forensic judge (veto only) and post-buy overwatch |
 | `copybot/evidence.py` | Evidence ledger: every COPY/ABORT/EXIT/EJECT/QUARANTINE with slot, signature, reason |
+| `copybot/adversarial_shield.py` | **Pillar 1**: kill switch (net copy EV after all frictions + exit-liquidity risk score, RugCheck) |
+| `copybot/social_radar.py` | **Pillar 2**: boosts / takeovers / profiles / PumpSwap migrations, social legitimacy, universe expansion |
+| `copybot/treasury_cfo.py` | **Pillar 3**: accounting ledger, meritocracy sizing (12% / 10% / 5%), high-water-mark profit lock |
+| `copybot/self_improver.py` | **Pillar 4**: post-exit regret, bounded AI/rules tuning, hot-reloaded `runtime_overrides.json` |
 | `copybot/wallet_scorer.py` | **Module A**: trade cycles, copyability filters, latency-adjusted replay, sybil links |
 | `copybot/safety_gate.py` | **Module B**: liquidity / mcap / authorities / Token-2022 / chase / round trip |
 | `copybot/token_security.py` | Mint inspection with a Token-2022 extension allow-list |
@@ -76,9 +80,13 @@ python main.py score                   # -> approved_wallets.json (+ data/scorer
 python main.py check-token <MINT>      # see the safety gate's verdict on any token
 python main.py run                     # shadow copy-trading; Ctrl-C to stop (state persists)
 python main.py report                  # PnL, exits by trigger, PnL per wallet, LIVE readiness
+python main.py cfo                     # treasury statement: flows, friction, meritocracy, locked reserve
+python main.py evolve                  # one bounded tuning round (AI if reachable, rules otherwise)
+python main.py radar --expand          # social/narrative radar; queue early profitable traders
+python main.py score --with-queue      # score seeds + radar queue
 ```
 
-Run the tests: `pip install -r requirements-dev.txt && pytest`. The suite has 75 tests,
+Run the tests: `pip install -r requirements-dev.txt && pytest`. The suite has 101 tests,
 including a full shadow lifecycle against fake markets and a real captured mainnet v1
 transaction.
 
@@ -127,6 +135,28 @@ Whales know they are being copied. Four defenses assume they are actively hostil
   wallets the numbers approved. The post-buy overwatch may eject only with an on-chain flag
   behind it. Neither ever runs in the pre-buy path. `doctor` probes the key and model.
 - **Evidence ledger.** `data/evidence.jsonl` holds every decision with its on-chain proof.
+
+## Autonomous pillars
+
+1. **Kill switch.** After the live quotes are in, a copy is vetoed when its expected net return
+   after drift, exit cost, tips and a slippage reserve is ≤ 0, or when its exit-liquidity risk
+   score is ≥ 60/100 (holders, bundled whale buy, hunter strikes, consumed edge, pool impact,
+   token age, RugCheck dangers). Every point of the score is explained in the evidence ledger.
+2. **Radar.** Polls free feeds, scores social legitimacy (real X account vs a link to someone
+   else's tweet, Telegram, website, community takeover, and a heavy penalty for links recycled
+   from other tokens), optionally adds an AI narrative score, and queues the early profitable
+   traders of qualifying tokens (1 h–7 d, ≥ $35k liquidity) for `score --with-queue`.
+3. **CFO.** A full ledger in `data/treasury_ledger.json`. Whales earn 12% sizing (PF ≥ 1.5
+   over ≥ 3 trades), sit at 10% by default, or drop to 5% after 2 straight losses. Every +20%
+   of equity locks 50% of the gain into a reserve the bot can never spend.
+4. **Self-improver.** 15/60 min after each exit it measures missed upside vs saved crash. Every
+   10 trades or 12 h it proposes new values for 10 whitelisted parameters plus whale demotions,
+   via AI or transparent rules. Proposals are clamped to hard bounds whose risky side is the
+   mandate value, limited to a 25% move per round, and hot-reloaded without a restart.
+
+AI routing: set `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` / `MODEL_ID` (or `LLM__*`) in `.env`.
+The key and URL are always taken from the same source. Every AI layer is optional and
+fail-safe, and none runs in the pre-buy path.
 
 ## Defaults (from the mandate, plus the review's additions)
 

@@ -31,6 +31,9 @@ from .risk_config import RiskManager
 from .ai_analyst import AIAnalyst
 from .cabal_detector import bundled_recipients, holder_distribution
 from .evidence import EvidenceLedger
+from .risk_config import per_leg_cost_from_roundtrip
+from .self_improver import RegretTracker, RuntimeOverrides, evolve
+from .treasury_cfo import TreasuryCFO
 from .safety_gate import GateResult, SafetyGate, WalletProfile
 from .solana_rpc import SolanaRpc
 from .state import Position, PositionStatus, StateStore, TradeJournal, save_json
@@ -96,7 +99,8 @@ class CopyEngine:
         self.notifier = Notifier(client, settings.telegram_bot_token, settings.telegram_chat_id)
         self.risk = RiskManager(settings.risk, self.store.state)
         self.gate = SafetyGate(
-            settings.safety, self.rpc, self.jupiter, self.dex, self.risk, self.store.state, settings.risk.entry_slippage_bps
+            settings.safety, self.rpc, self.jupiter, self.dex, self.risk, self.store.state, settings.risk.entry_slippage_bps,
+            shield=settings.shield, expected_tip_lamports=settings.shadow_assumed_priority_lamports,
         )
         if settings.is_live:
             if signer is None:
@@ -115,6 +119,15 @@ class CopyEngine:
         self.profiles: dict[str, WalletProfile] = {}
         self.recent_buys: dict[str, dict[str, tuple[float, int]]] = {}  # mint -> wallet -> (buy time, slot)
         self.evidence = EvidenceLedger(settings.data_dir / "evidence.jsonl")
+        ledger = "live_treasury_ledger.json" if settings.is_live else "treasury_ledger.json"
+        self.cfo = TreasuryCFO(settings.treasury, settings.data_dir / ledger, settings.execution_mode.value)
+        self.regret = RegretTracker(settings.data_dir / "regret.json", settings.evolve.regret_checks_min)
+        self.overrides = RuntimeOverrides(settings.data_dir / "runtime_overrides.json", settings)
+        self.overrides.maybe_reload(self.cfo)
+        self._evolve_state_path = settings.data_dir / "evolve_state.json"
+        self._evolve_state = json.loads(self._evolve_state_path.read_text()) if self._evolve_state_path.exists() \
+            else {"last_ts": time.time(), "closes_at_last": self.cfo.state.trades_closed}
+        self._evolving = False
         self.analyst = AIAnalyst(settings.llm)
 
     def spawn(self, coro) -> asyncio.Task:
@@ -220,8 +233,8 @@ class CopyEngine:
     async def handle_buy(self, ev: SwapEvent, tx: dict | None = None) -> None:
         cluster = self._record_buy_and_cluster(ev)
         pre = self.gate.precheck(ev)
-        if tx is not None and self.s.safety.reject_bundled_whale_buy:
-            ring = bundled_recipients(tx, ev.wallet, ev.mint)
+        ring = bundled_recipients(tx, ev.wallet, ev.mint) if tx is not None else set()
+        if self.s.safety.reject_bundled_whale_buy:
             if ring:
                 pre.append(f"BUNDLE: the whale's buy tx also delivered tokens to {len(ring)} other wallet(s)")
         if pre:
@@ -233,11 +246,12 @@ class CopyEngine:
         async with self._entry_lock:  # serialize entries: position limits and no double-dip
             free = await self.executor.free_balance_lamports()
             self.risk.roll_day(self.risk.equity_lamports(free))
-            sizing = self.risk.size_position(free)
+            frac, size_tier = self.cfo.size_frac(ev.wallet)
+            sizing = self.risk.size_position(free, frac, self.cfo.state.locked_reserve_lamports)
             if not sizing.allowed:
                 log.info("skip %s: %s", ev.mint[:8], sizing.reason)
                 return
-            gate = await self.gate.evaluate(ev, sizing.lamports)
+            gate = await self.gate.evaluate(ev, sizing.lamports, bundled=bool(ring))
             log.info("gate %s", gate.summary())
             self.evidence.record(
                 "COPY" if gate.passed else "ABORT", stage="gate", wallet=ev.wallet, mint=ev.mint, slot=ev.slot,
@@ -248,13 +262,16 @@ class CopyEngine:
                 holder_top5_pct=round(gate.holders.top5_pct * 100, 1) if gate.holders else None,
                 holder_max_pct=round(gate.holders.max_single_pct * 100, 1) if gate.holders else None,
                 liquidity_usd=gate.pair.liquidity_usd if gate.pair else None,
+                net_ev_pct=round(gate.net_ev * 100, 2) if gate.net_ev is not None else None,
+                exit_liquidity_risk=gate.exit_risk, rugcheck=gate.rugcheck,
                 tier="CLUSTER" if cluster else "SOLO", latency_ms=round(gate.latency_ms), reasons=gate.reasons,
             )
             if not gate.passed:
                 return
-            await self._enter(ev, sizing.lamports, gate, cluster)
+            await self._enter(ev, sizing.lamports, gate, cluster, size_tier)
 
-    async def _enter(self, ev: SwapEvent, lamports: int, gate: GateResult, cluster: list[str] | None = None) -> None:
+    async def _enter(self, ev: SwapEvent, lamports: int, gate: GateResult, cluster: list[str] | None = None,
+                     size_tier: str = "base") -> None:
         assert gate.buy_quote and gate.fee_budget
         fill = await self.executor.buy(ev.mint, lamports, gate.buy_quote, gate.fee_budget.max_priority_lamports)
         # The attempt counts against the 24h re-entry rule even if it failed.
@@ -294,11 +311,15 @@ class CopyEngine:
             whale_entry_time=float(ev.block_time) if ev.block_time else time.time(),
             high_conviction=bool(cluster),
             tier="CLUSTER" if cluster else "SOLO",
+            size_tier=size_tier,
+            dex_leg_cost=per_leg_cost_from_roundtrip(gate.roundtrip_return) if gate.roundtrip_return else 0.0,
             whale_slot=ev.slot,
             cluster_wallets=sorted(set(cluster) | {ev.wallet}) if cluster else [],
             entry_tx=fill.signature,
         )
         self.store.state.positions[pos.id] = pos
+        self.cfo.record_entry(fill.lamports, fill.fees_lamports, fill.rent_lamports, pos.dex_leg_cost)
+        self.cfo.save()
         self.journal.append(
             {
                 "event": "ENTRY",
@@ -376,6 +397,57 @@ class CopyEngine:
             log.warning("AI_EMERGENCY_EJECT %s: %s", pos.symbol or pos.mint[:8], reason)
             await self.exits.evaluate(pos, force_quote=True)
 
+    # ---- CFO / self-improvement ---------------------------------------------------------
+    async def _after_exit(self) -> None:
+        free = await self.executor.free_balance_lamports()
+        locked = self.cfo.update_hwm(self.risk.equity_lamports(free))
+        self.cfo.save()
+        if locked:
+            self.evidence.record("PROFIT_LOCK", locked_sol=locked / LAMPORTS_PER_SOL,
+                                 reserve_sol=self.cfo.state.locked_reserve_lamports / LAMPORTS_PER_SOL)
+            self.spawn(self.notifier.send(f"🏦 PROFIT LOCK: +{locked / LAMPORTS_PER_SOL:.4f} SOL moved to the reserve floor "
+                                          f"({self.cfo.state.locked_reserve_lamports / LAMPORTS_PER_SOL:.4f} SOL never risked)"))
+        self._maybe_evolve()
+
+    def _maybe_evolve(self) -> None:
+        st, cfg = self._evolve_state, self.s.evolve
+        due = (self.cfo.state.trades_closed - st["closes_at_last"] >= cfg.every_trades
+               or time.time() - st["last_ts"] >= cfg.every_hours * 3600)
+        if due and not self._evolving:
+            self.spawn(self.run_evolve())
+
+    async def run_evolve(self) -> dict:
+        self._evolving = True
+        try:
+            closes = [r for r in self.journal.read() if r.get("event") == "EXIT"]
+            doc = await evolve(self.s, self.cfo, self.regret, self.overrides, self.analyst, closes,
+                               self.s.data_dir / "evolution_log.jsonl")
+            self._evolve_state = {"last_ts": time.time(), "closes_at_last": self.cfo.state.trades_closed}
+            self._evolve_state_path.write_text(json.dumps(self._evolve_state))
+            self.overrides.maybe_reload(self.cfo)  # apply immediately
+            self.evidence.record("EVOLVE", source=doc["source"], params=doc["params"], demoted=doc["demoted_whales"],
+                                 rationale=doc["rationale"])
+            log.info("EVOLVE (%s): %s | %s", doc["source"], doc["params"], doc["rationale"])
+            return doc
+        finally:
+            self._evolving = False
+
+    async def maintenance_loop(self) -> None:
+        """Hot reload of runtime overrides, regret checkpoints, time-based evolution."""
+        last_regret = 0.0
+        while True:
+            try:
+                self.overrides.maybe_reload(self.cfo)
+                if time.time() - last_regret >= 60:
+                    last_regret = time.time()
+                    await self.regret.process_due(self.jupiter)
+                    self._maybe_evolve()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("maintenance loop error")
+            await asyncio.sleep(self.s.evolve.reload_interval_s)
+
     # ---- exits -------------------------------------------------------------------------
     async def close_or_reduce(self, pos: Position, fraction: float, reason: str, *, emergency: bool = False) -> None:
         final = fraction >= 0.999
@@ -413,7 +485,8 @@ class CopyEngine:
         pos.cost_basis_lamports -= cost_part
         pos.exit_txs.append(fill.signature)
         self.risk.record_realized(fill.lamports - cost_part)
-        if final or pos.token_raw <= 0:
+        closing = final or pos.token_raw <= 0
+        if closing:
             pos.token_raw = 0
             pos.cost_basis_lamports = 0
             pos.status = PositionStatus.CLOSED
@@ -423,6 +496,11 @@ class CopyEngine:
                 pos.rent_lamports = 0
         else:
             apply_partial_exit(pos, self.s.exits)
+        self.cfo.record_exit(pos.whale, fill.lamports, fill.fees_lamports, fill.rent_lamports, pos.dex_leg_cost,
+                             pos.net_pnl_lamports if closing else None)
+        if closing:
+            self.regret.schedule(pos, exit_price=fill.lamports / sold if sold else 0.0, token_raw=sold or pos.initial_token_raw)
+        await self._after_exit()
         self.evidence.record("EXIT" if pos.status is PositionStatus.CLOSED else "EXIT_PARTIAL", mint=pos.mint,
                              wallet=pos.whale, tier=pos.tier, reason=reason, signature=fill.signature,
                              net_return_pct=round(pos.net_return * 100, 2) if pos.status is PositionStatus.CLOSED else None)
@@ -435,7 +513,8 @@ class CopyEngine:
                 f"net {sol(pos.net_pnl_lamports)} ({pos.net_return:+.1%}) in {pos.age_minutes:.0f}min"
             )
         else:
-            await self.notifier.send(f"💰 SCALE-OUT {pos.symbol or pos.mint[:8]} — {reason} | received {sol(fill.lamports)}; stop -> break-even")
+            await self.notifier.send(f"💰 SCALE-OUT {pos.symbol or pos.mint[:8]} — {reason} | received {sol(fill.lamports)}; "
+                                     f"runner is now a moonbag (floor +{self.s.exits.moonbag_floor_profit:.0%}, no timer)")
         self.check_breaker()
 
     async def _write_off(self, pos: Position, reason: str) -> None:
@@ -446,6 +525,8 @@ class CopyEngine:
         pos.closed_at = time.time()
         pos.close_reason = f"WRITE-OFF: {reason}"
         self.risk.record_realized(-cost)
+        self.cfo.record_exit(pos.whale, 0, 0, 0, 0.0, pos.net_pnl_lamports)
+        await self._after_exit()
         self._journal_exit(pos, "EXIT", pos.close_reason, 0, 0, 0, "")
         self.save()
         await self.notifier.send(f"☠️ WRITE-OFF {pos.mint[:8]}: no sell route. Net {sol(pos.net_pnl_lamports)}", level=logging.ERROR)
@@ -508,4 +589,4 @@ class CopyEngine:
             f"copybot started in {self.s.execution_mode.value} | {len(self.wallets)} wallets | free {sol(free)} | "
             f"{len(self.store.state.open_positions())} open positions restored"
         )
-        await asyncio.gather(listener.run(), self.exits.run(), self.status_loop())
+        await asyncio.gather(listener.run(), self.exits.run(), self.status_loop(), self.maintenance_loop())

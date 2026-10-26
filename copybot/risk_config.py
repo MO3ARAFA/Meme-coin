@@ -55,16 +55,19 @@ class RiskManager:
         locked = sum(p.cost_basis_lamports + p.rent_lamports for p in self.state.open_positions())
         return free_lamports + locked
 
-    def size_position(self, free_lamports: int) -> SizingDecision:
+    def size_position(self, free_lamports: int, size_frac: float | None = None,
+                      locked_reserve_lamports: int = 0) -> SizingDecision:
+        """`size_frac` comes from the CFO's meritocracy tier; the CFO's high-water-mark reserve
+        is never spent and never counts as equity to size from."""
         if self.is_halted():
             left = (self.state.halted_until - time.time()) / 3600
             return SizingDecision(False, reason=f"circuit breaker active ({left:.1f}h left)")
         at_risk = [p for p in self.state.open_positions() if self.cfg.moonbags_count_toward_limit or not p.scaled_out]
         if len(at_risk) >= self.cfg.max_open_positions:
             return SizingDecision(False, reason=f"max {self.cfg.max_open_positions} open positions at risk")
-        equity = self.equity_lamports(free_lamports)
-        size = int(equity * self.cfg.position_size_frac)
-        reserve = int(self.cfg.sol_reserve * LAMPORTS_PER_SOL)
+        equity = self.equity_lamports(free_lamports) - locked_reserve_lamports
+        size = int(equity * (size_frac if size_frac is not None else self.cfg.position_size_frac))
+        reserve = int(self.cfg.sol_reserve * LAMPORTS_PER_SOL) + locked_reserve_lamports
         spendable = free_lamports - reserve
         if spendable <= 0:
             return SizingDecision(False, reason="free balance below SOL reserve")

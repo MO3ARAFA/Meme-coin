@@ -7,6 +7,7 @@ needs to be edited in code. Secrets (PRIVATE_KEY) are NOT read here: see `wallet
 
 from __future__ import annotations
 
+import os
 from enum import Enum
 from pathlib import Path
 
@@ -223,6 +224,61 @@ class LLMConfig(BaseModel):
     def enabled(self) -> bool:
         return bool(self.api_key)
 
+    @property
+    def sdk_base_url(self) -> str:
+        """The SDK appends /v1/messages itself: accept routers configured as '.../v1'. Never
+        None: the SDK would then read ANTHROPIC_BASE_URL from the process environment, which
+        could route this key somewhere the operator did not configure."""
+        url = self.base_url.rstrip("/")
+        if url.endswith("/v1"):
+            url = url[: -len("/v1")]
+        return url or "https://api.anthropic.com"
+
+
+class ShieldConfig(BaseModel):
+    """Pillar 1 — pre-trade kill switch: "am I the exit liquidity?"."""
+
+    min_net_ev: float = 0.0  # veto if expected net profit after all frictions is <= this
+    slippage_reserve_pct: float = 0.005  # extra adverse fill we budget beyond the quote
+    max_exit_liquidity_risk: int = 60  # composite 0-100; >= this is a hard veto
+    rugcheck: bool = True  # public RugCheck summary, in parallel; fails OPEN (on-chain checks stay primary)
+    rugcheck_timeout_s: float = 1.2
+    rugcheck_max_normalised: int = 60  # their 0-100 risk scale
+
+
+class RadarConfig(BaseModel):
+    """Pillar 2 — social / narrative / new-token radar."""
+
+    min_liquidity_usd: float = 35_000
+    min_age_hours: float = 1.0
+    max_age_days: float = 7.0
+    max_tokens_per_pass: int = 15
+    min_narrative_score: int = 50  # AI score 0-100 when the AI endpoint is up
+    poll_interval_s: float = 300.0
+
+
+class TreasuryConfig(BaseModel):
+    """Pillar 3 — autonomous CFO: meritocracy sizing and high-water-mark profit lock."""
+
+    merit_size_frac: float = 0.12
+    base_size_frac: float = 0.10
+    probation_size_frac: float = 0.05
+    merit_min_trades: int = 3
+    merit_profit_factor: float = 1.5
+    probation_losses: int = 2  # consecutive losses on one whale -> probation until it wins again
+    hwm_step: float = 0.20  # every +20% of equity ...
+    lock_fraction: float = 0.50  # ... locks 50% of those gains into an untouchable reserve
+
+
+class EvolveConfig(BaseModel):
+    """Pillar 4 — self-improver: regret analysis and bounded auto-tuning."""
+
+    every_trades: int = 10
+    every_hours: float = 12.0
+    regret_checks_min: list[int] = Field(default_factory=lambda: [15, 60])
+    max_step_frac: float = 0.25  # one tuning round can move a parameter by at most 25%
+    reload_interval_s: float = 10.0
+
 
 class LiveGateConfig(BaseModel):
     """What shadow mode must prove before LIVE is allowed to start."""
@@ -282,6 +338,10 @@ class Settings(BaseSettings):
     risk: RiskConfig = Field(default_factory=RiskConfig)
     live_gate: LiveGateConfig = Field(default_factory=LiveGateConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    shield: ShieldConfig = Field(default_factory=ShieldConfig)
+    radar: RadarConfig = Field(default_factory=RadarConfig)
+    treasury: TreasuryConfig = Field(default_factory=TreasuryConfig)
+    evolve: EvolveConfig = Field(default_factory=EvolveConfig)
 
     @field_validator("listener_mode")
     @classmethod
@@ -318,7 +378,26 @@ class Settings(BaseSettings):
         return self.data_dir / name
 
 
+def _anthropic_aliases() -> tuple[str, str, str]:
+    """(api_key, base_url, model) from the standard Anthropic variable names. Key and URL are
+    always taken from the SAME source (.env first, then the process environment), so a key is
+    never paired with a base URL set somewhere else."""
+    from dotenv import dotenv_values
+
+    for source in (dotenv_values(".env"), os.environ):
+        key = (source.get("ANTHROPIC_API_KEY") or "").strip()
+        if key:
+            return key, (source.get("ANTHROPIC_BASE_URL") or "").strip(), (source.get("MODEL_ID") or "").strip()
+    return "", "", ""
+
+
 def load_settings() -> Settings:
     settings = Settings()
+    # Accept the standard Anthropic variable names as aliases for the LLM__ settings.
+    llm = settings.llm
+    if not llm.api_key:
+        llm.api_key, alias_url, alias_model = _anthropic_aliases()
+        llm.base_url = llm.base_url or alias_url
+        llm.model = llm.model or alias_model
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     return settings

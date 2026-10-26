@@ -16,13 +16,14 @@ import logging
 import time
 from dataclasses import dataclass, field
 
-from .config import SafetyConfig
+from .config import SafetyConfig, ShieldConfig
 from .constants import LAMPORTS_PER_SOL, NON_MEME_MINTS, USDC_MINT, WSOL_MINT
 from .dexscreener import DexScreenerClient, PairInfo, pick_best_pair
 from .jupiter import JupiterClient, NoRouteError, Quote
 from .risk_config import FeeBudget, RiskManager, per_leg_cost_from_roundtrip
 from .solana_rpc import SolanaRpc
 from .state import BotState
+from .adversarial_shield import RiskSignals, kill_switch, rugcheck_summary
 from .cabal_detector import HolderReport, holder_distribution
 from .token_security import MintInfo, inspect_mint
 from .tx_parser import Side, SwapEvent
@@ -62,6 +63,9 @@ class GateResult:
     fee_budget: FeeBudget | None = None
     holders: HolderReport | None = None
     edge_consumed: float = 0.0  # (price drift + round-trip cost) / wallet's historical raw edge
+    net_ev: float | None = None  # kill switch: expected net return of this copy
+    exit_risk: int = 0  # kill switch: exit-liquidity risk 0-100
+    rugcheck: int | None = None
 
     def summary(self) -> str:
         head = "PASS" if self.passed else "ABORT"
@@ -78,6 +82,10 @@ class GateResult:
             parts.append(f"top5={self.holders.top5_pct:.0%}")
         if self.edge_consumed:
             parts.append(f"edge_used={self.edge_consumed:.0%}")
+        if self.net_ev is not None:
+            parts.append(f"netEV={self.net_ev:+.1%}")
+        if self.exit_risk:
+            parts.append(f"exit_risk={self.exit_risk}")
         if self.reasons:
             parts.append("reasons: " + "; ".join(self.reasons))
         return " | ".join(parts)
@@ -110,6 +118,8 @@ class SafetyGate:
         risk: RiskManager,
         state: BotState,
         entry_slippage_bps: int,
+        shield: ShieldConfig | None = None,
+        expected_tip_lamports: int = 100_000,
     ) -> None:
         self.cfg = cfg
         self.rpc = rpc
@@ -121,6 +131,8 @@ class SafetyGate:
         self.sol_price = SolPriceCache(jupiter)
         self._mint_cache: dict[str, MintInfo] = {}
         self.profiles: dict[str, WalletProfile] = {}
+        self.shield = shield or ShieldConfig()
+        self.expected_tip_lamports = expected_tip_lamports
 
     async def mint_info(self, mint: str) -> MintInfo:
         cached = self._mint_cache.get(mint)
@@ -167,7 +179,7 @@ class SafetyGate:
             reasons.append(f"whale buy too small ({ev.quote_amount_raw / LAMPORTS_PER_SOL:.3f} SOL)")
         return reasons
 
-    async def evaluate(self, ev: SwapEvent, size_lamports: int) -> GateResult:
+    async def evaluate(self, ev: SwapEvent, size_lamports: int, *, bundled: bool = False) -> GateResult:
         t0 = time.perf_counter()
         res = GateResult(passed=False, mint=ev.mint)
         res.reasons = self.precheck(ev)
@@ -175,7 +187,7 @@ class SafetyGate:
             res.latency_ms = (time.perf_counter() - t0) * 1000
             return res
         try:
-            await asyncio.wait_for(self._remote_checks(ev, size_lamports, res), self.cfg.gate_hard_timeout_ms / 1000)
+            await asyncio.wait_for(self._remote_checks(ev, size_lamports, res, bundled), self.cfg.gate_hard_timeout_ms / 1000)
         except asyncio.TimeoutError:
             res.reasons.append(f"gate timeout > {self.cfg.gate_hard_timeout_ms}ms (price data too slow to trust)")
         except Exception as exc:  # fail closed: any unexpected error aborts the buy
@@ -196,7 +208,17 @@ class SafetyGate:
             tolerance=self.cfg.identical_holder_tolerance, min_pct=self.cfg.identical_holder_min_pct,
         )
 
-    async def _remote_checks(self, ev: SwapEvent, size_lamports: int, res: GateResult) -> None:
+    async def _remote_checks(self, ev: SwapEvent, size_lamports: int, res: GateResult, bundled: bool = False) -> None:
+        rug_t = (asyncio.create_task(rugcheck_summary(self.dex.client, ev.mint, self.shield.rugcheck_timeout_s))
+                 if self.shield.rugcheck else None)
+        try:
+            await self._checks(ev, size_lamports, res, bundled, rug_t)
+        finally:
+            if rug_t is not None and not rug_t.done():
+                rug_t.cancel()
+
+    async def _checks(self, ev: SwapEvent, size_lamports: int, res: GateResult, bundled: bool,
+                      rug_t: asyncio.Task | None) -> None:
         cfg = self.cfg
         pairs_t = asyncio.create_task(self.dex.pairs_for_tokens([ev.mint]))
         mint_t = asyncio.create_task(self.mint_info(ev.mint))
@@ -291,3 +313,32 @@ class SafetyGate:
         res.fee_budget = budget
         if not budget.allowed:
             res.reasons.append(budget.reason)
+            return
+
+        # 6. Kill switch (Pillar 1): positive copy EV after every friction, and not exit liquidity.
+        rug_norm, rug_dangers = (await rug_t) if rug_t is not None else (None, [])
+        res.rugcheck = rug_norm
+        pair = res.pair
+        pool_frac = age_h = None
+        if pair is not None:
+            if pair.liquidity_usd and pair.price_native > 0 and pair.quote_mint == WSOL_MINT:
+                usd_per_sol = pair.price_usd / pair.price_native
+                pool_frac = ev.quote_amount_raw / LAMPORTS_PER_SOL * usd_per_sol / pair.liquidity_usd
+            if pair.pair_created_at_ms:
+                age_h = (time.time() * 1000 - pair.pair_created_at_ms) / 3_600_000
+        h = res.holders
+        signals = RiskSignals(
+            holder_top5_pct=h.top5_pct if h else None, holder_max_pct=h.max_single_pct if h else None,
+            identical_holders=h.identical_count if h else 0, bundled_whale_buy=bundled,
+            whale_hunter_strikes=self.state.hunter_strikes.get(ev.wallet, 0),
+            edge_consumed=res.edge_consumed or None, whale_buy_pool_frac=pool_frac, token_age_hours=age_h,
+            rugcheck_normalised=rug_norm, rugcheck_dangers=rug_dangers,
+        )
+        profile = self.profiles.get(ev.wallet)
+        tip_frac = 2 * min(self.expected_tip_lamports, budget.max_priority_lamports) / size_lamports
+        verdict = kill_switch(
+            signals, self.shield, edge=profile.expected_edge_pct if profile else None, drift=res.chase_pct,
+            exit_cost=per_leg_cost_from_roundtrip(res.roundtrip_return), tip_frac=tip_frac,
+        )
+        res.net_ev, res.exit_risk = verdict.net_ev, verdict.risk
+        res.reasons.extend(verdict.reasons)
