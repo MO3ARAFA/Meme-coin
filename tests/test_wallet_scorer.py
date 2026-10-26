@@ -62,8 +62,8 @@ def test_win_rate_above_82pct_is_rejected_as_unreplicable():
 
 
 def test_lottery_gambler_rejected_by_median_roi_and_concentration():
-    m = metrics(trader(30, lambda i: 50.0 if i == 0 else -0.5 if i % 3 == 0 else 0.05, hold_s=900))
-    assert m.mean_roi > 1.0  # the mean looks amazing...
+    m = metrics(trader(30, lambda i: 19.0 if i == 0 else -0.5 if i % 3 == 0 else 0.05, hold_s=900))
+    assert m.mean_roi > 0.4  # the mean looks great...
     assert not m.passed  # ...the median exposes it
     assert any("median ROI" in r for r in m.rejections)
 
@@ -109,3 +109,18 @@ def test_insider_moving_tokens_to_other_wallets_is_rejected():
         events.append((t + i * 100 + 30, t + i * 100 + 30, "xfer", (mint, 1000, 0)))
     m = metrics(events)
     assert any("transfers to other wallets" in r for r in m.rejections)
+
+
+def test_vault_funded_buys_are_unpriced_not_lottery_wins():
+    """A trading-bot vault pays for the buy, so the wallet's SOL barely moves; the sell then
+    looks like a 100,000x. Seen live on mainnet (Oct 2026)."""
+    events = trader(30, good_roi, hold_s=1200)
+    t = int(NOW - 86400)
+    for i in range(12):
+        mint = f"V{i}"
+        events.append(ev(t + i * 100, Side.BUY, mint, 0.0002, 1000, 0, 1000))
+        events.append(ev(t + i * 100 + 900, Side.SELL, mint, 26.0, 1000, 1000, 0))
+    m = metrics(events)
+    assert m.closed_trades == 30  # the 12 vault cycles don't pollute ROI stats
+    assert m.mean_roi < 1.0
+    assert any("off-wallet" in r for r in m.rejections)

@@ -48,7 +48,7 @@ class Cycle:
     peak_balance: int = 0
     first_sell_at: int | None = None
     closed_at: int | None = None
-    outcome: str = "open"  # open | sold | transferred | contaminated
+    outcome: str = "open"  # open | sold | transferred | contaminated | unpriced
 
     @property
     def roi(self) -> float:
@@ -83,6 +83,7 @@ class WalletMetrics:
     top_trade_pnl_share: float = 0.0
     sniper_ratio: float = 0.0
     transfer_out_ratio: float = 0.0
+    unpriced_ratio: float = 0.0
     avg_buy_sol: float = 0.0
     trades_per_day: float = 0.0
     days_since_last_trade: float = 0.0
@@ -161,6 +162,10 @@ def compute_metrics(
 ) -> WalletMetrics:
     now = now or time.time()
     m = WalletMetrics(address=address, txs_scanned=txs_scanned, history_days=round(history_days, 2))
+    for c in cycles:
+        if c.outcome == "sold" and (c.sol_in < cfg.min_cycle_buy_sol * LAMPORTS_PER_SOL or c.roi > cfg.max_cycle_roi):
+            c.outcome = "unpriced"
+    unpriced = [c for c in cycles if c.outcome == "unpriced"]
     sold = [c for c in cycles if c.outcome == "sold" and c.sol_in > 0]
     transferred = [c for c in cycles if c.outcome == "transferred"]
     m.closed_trades = len(sold)
@@ -188,8 +193,9 @@ def compute_metrics(
             if c.mint in token_created_ms and c.opened_at - token_created_ms[c.mint] / 1000 <= cfg.sniper_window_s
         ]
         m.sniper_ratio = len(snipes) / len(wins) if wins else 0.0
-    exits = len(sold) + len(transferred)
+    exits = len(sold) + len(transferred) + len(unpriced)
     m.transfer_out_ratio = len(transferred) / exits if exits else 0.0
+    m.unpriced_ratio = len(unpriced) / exits if exits else 0.0
     m.trades_per_day = len(sold) / max(history_days, 1.0)
 
     r = m.rejections
@@ -225,6 +231,8 @@ def compute_metrics(
             r.append(f"{m.trades_per_day:.0f} trades/day (bot)")
         if m.days_since_last_trade > cfg.max_days_since_last_trade:
             r.append(f"inactive for {m.days_since_last_trade:.1f} days")
+    if m.unpriced_ratio > cfg.max_unpriced_ratio:
+        r.append(f"{m.unpriced_ratio:.0%} of trades paid off-wallet (bot vault) — buy signals uncopyable")
     if m.transfer_out_ratio > cfg.max_transfer_out_ratio:
         r.append(f"{m.transfer_out_ratio:.0%} of exits were transfers to other wallets (insider/bundler)")
 

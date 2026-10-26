@@ -49,6 +49,12 @@ class ScorerConfig(BaseModel):
     sniper_window_s: float = 2.0  # buy within ~5 slots of pool creation counts as block-0/1
     max_sniper_ratio: float = 0.30
     max_transfer_out_ratio: float = 0.25  # tokens moved to other wallets instead of sold (insider/bundler tell)
+    # Buys paid from a trading-bot vault (not the wallet) look nearly free in balance deltas,
+    # then the sell looks like a 1000x. Such cycles are excluded as "unpriced"; a wallet that
+    # trades mostly this way can't be copied (its buy signals carry no usable price).
+    min_cycle_buy_sol: float = 0.01
+    max_cycle_roi: float = 20.0
+    max_unpriced_ratio: float = 0.25
     min_avg_buy_sol: float = 0.1
     max_trades_per_day: float = 40.0  # above this it is a bot, not a trader
     max_days_since_last_trade: float = 4.0
