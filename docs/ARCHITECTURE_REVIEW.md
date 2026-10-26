@@ -205,6 +205,11 @@ the fresh quote, a slow gate makes the bot *skip*, never *overpay*.
   2.17 replayed at **−2.7%/trade** for a copier (replay win rate 28%, PF 0.44). Its PF was
   size-weighted on a few big trades. Its typical trade (+2–5%) is smaller than our latency +
   fee cost. Only the replay exposes this.
+- **A replay can also be a lottery.** The first replay approved a wallet at +43%/trade, but
+  that came from 3 trades (15x, 6x, 4.9x) held 6–17 hours. Without the top 10%, the replay
+  was −3%, and our exit engine closes everything at 4 h anyway. The replay now covers only
+  trades closed within our max hold and drops the top 5% of copied returns. The same wallet
+  re-scored at +2.0%/trade, PF 1.47: a real but thin edge.
 - **Recent pool transactions are mostly bots.** 17 of 30 wallets sampled from the latest pool
   activity did 300–470 tx/day. `harvest` samples evenly across thousands of signatures,
   requires a system-owned account (pools and vaults are program-owned), ≤ 80 tx/day, and

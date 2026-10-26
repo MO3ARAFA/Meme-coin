@@ -137,7 +137,8 @@ def test_scratching_pro_passes_on_non_scratch_median_and_replay():
     m = metrics(trader(40, scratcher_roi, hold_s=900))
     assert abs(m.median_roi) < 0.05  # the plain median would have rejected this trader
     assert m.nonscratch_median_roi >= 0.15
-    assert m.replay_trades == 40 and m.replay_profit_factor >= 1.35 and m.replay_expectancy > 0
+    assert m.replay_trades == 38  # 40 copied, top 5% (2) trimmed
+    assert m.replay_profit_factor >= 1.35 and m.replay_expectancy > 0
     assert m.passed, m.rejections
 
 
@@ -159,7 +160,7 @@ def test_replay_skips_buys_the_live_gate_would_never_copy():
         events.append(ev(t + i + 600, Side.SELL, f"B{i}", 1.0, 10, 10, 0))
     m = metrics(events)
     assert m.median_buy_sol == 2.0
-    assert m.replay_trades == 30  # the 0.2 SOL buys (< 30% of median, < 0.25 SOL) are excluded
+    assert m.replay_trades == 29  # 30 real buys, top 5% trimmed; the 0.2 SOL bait-sized buys excluded
 
 
 # ---- sybil links -------------------------------------------------------------------
@@ -188,3 +189,17 @@ def test_counterparty_extraction_from_parsed_instructions():
     ]}}, "meta": {"innerInstructions": [{"instructions": [
         {"program": "system", "parsed": {"type": "transfer", "info": {"source": "Z", "destination": "W", "lamports": 10**9}}}]}]}}
     assert sol_counterparties(tx, "W", 5 * 10**7) == {"X", "Z"}  # Y below the link threshold
+
+
+def test_replay_ignores_gains_beyond_our_max_hold_and_lottery_outliers():
+    # 30 flat trades closed within 4h, plus 3 huge winners held 17h: the whale's edge is
+    # entirely in trades our exit engine would have closed long before.
+    events = trader(30, lambda i: 0.0 if i % 2 else 0.02, hold_s=1800)
+    t = int(NOW - 3600 * 30)
+    for i in range(3):
+        events.append(ev(t + i, Side.BUY, f"L{i}", 1.0, 10, 0, 10))
+        events.append(ev(t + i + 17 * 3600, Side.SELL, f"L{i}", 15.0, 10, 10, 0))
+    m = metrics(events)
+    assert m.replay_trades == 29  # 30 short trades (top 5% = 1 dropped); the 17h winners excluded
+    assert m.replay_expectancy < 0
+    assert any("copy latency" in r for r in m.rejections)

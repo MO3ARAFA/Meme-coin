@@ -70,6 +70,9 @@ class ScorerConfig(BaseModel):
     replay_leg_fee: float = 0.012
     replay_exit_penalty: float = 0.0
     replay_min_buy_sol: float = 0.25  # buys the live gate would skip anyway are not replayed
+    # Our exit engine force-closes at EXITS__MAX_HOLD_MINUTES: whale gains realized after that
+    # were never available to us, so those trades are not replayed.
+    replay_max_hold_minutes: float = 240.0
     replay_min_trades: int = 15
     replay_min_profit_factor: float = 1.35
     replay_min_expectancy: float = 0.0

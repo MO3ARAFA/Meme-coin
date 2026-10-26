@@ -73,7 +73,7 @@ python main.py run                     # shadow copy-trading; Ctrl-C to stop (st
 python main.py report                  # PnL, exits by trigger, PnL per wallet, LIVE readiness
 ```
 
-Run the tests: `pip install -r requirements-dev.txt && pytest`. The suite has 59 tests,
+Run the tests: `pip install -r requirements-dev.txt && pytest`. The suite has 60 tests,
 including a full shadow lifecycle against fake markets and a real captured mainnet v1
 transaction.
 
@@ -93,7 +93,7 @@ Whales know they are being copied. Four defenses assume they are actively hostil
 
 | Defense | Where | What it does |
 |---|---|---|
-| **Latency-adjusted replay** | `score` | Re-prices every historical trade the gate would have copied as *we* would have filled it (entry +2.5%, 1.2% fee per leg) and requires replay PF ≥ 1.35 with positive expectancy. A whale's PF is worthless if the edge dies 2 slots later. |
+| **Latency-adjusted replay** | `score` | Re-prices every historical trade the bot could have replicated (copyable size, closed within our 4 h max hold) as *we* would have filled it (entry +2.5%, 1.2% fee per leg). The top 5% is dropped, and replay PF must be ≥ 1.35 with positive expectancy. A whale's PF is worthless if the edge dies 2 slots later. |
 | **Bait-size detection** | live gate | A buy smaller than 30% of the wallet's median buy (from `approved_wallets.json`) is treated as an inducement (a small buy from the public wallet while dumping from a shadow wallet) and aborted. |
 | **Sybil links + independent cluster consensus** | `score` + live engine | Wallets that send SOL or tokens to each other form one *link group* (one operator, one approval slot). When 2+ wallets from **different** link groups buy the same token within 10 min, the position is tagged `HIGH_CONVICTION_CLUSTER` and its runner gets a 25% trail instead of 15% after the scale-out. Linked wallets never confirm each other. |
 | **Auto-quarantine** | live engine | Two "dumped within 90 s of its own buy" events quarantine the wallet. It is moved to `quarantined` in `approved_wallets.json`, its signals are ignored, and it, along with every wallet linked to it, stays barred across re-scores. |

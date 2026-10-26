@@ -280,8 +280,11 @@ async def run_harvest(settings: Settings, client: httpx.AsyncClient, rpc: Solana
                  i, len(deep), c.address[:8], c.tx_per_day, c.closed_trades, c.win_rate * 100,
                  c.profitable_tokens, c.realized_pnl_sol)
 
+    # Net-profitable wallets first: "profitable in 20 tokens" means little from a spray trader
+    # who is net negative.
     winners = sorted((c for c in deep if c.profitable_tokens >= cfg.min_profitable_tokens),
-                     key=lambda c: (c.profitable_tokens, c.realized_pnl_sol), reverse=True)[: cfg.top_n]
+                     key=lambda c: (c.realized_pnl_sol > 0, c.profitable_tokens, c.realized_pnl_sol),
+                     reverse=True)[: cfg.top_n]
     lines = [
         f"# harvest {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())}: {len(tokens)} tokens, "
         f"{len(ranked)} traders, {len(survivors)} pre-screened, {len(winners)} multi-token winners",

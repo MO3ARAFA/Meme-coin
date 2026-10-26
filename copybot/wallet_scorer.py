@@ -303,10 +303,16 @@ def copy_return(whale_roi: float, cfg: ScorerConfig) -> float:
 
 
 def replay_copy_returns(sold: list[Cycle], cfg: ScorerConfig, median_buy_lamports: float) -> list[float]:
-    """Latency-adjusted replay over the trades our live gate would actually have copied:
-    opening buy >= the gate's minimum and not a bait-sized outlier for this wallet."""
+    """Latency-adjusted replay over the trades our bot could actually have replicated:
+    opening buy >= the gate's minimum, not a bait-sized outlier for this wallet, and closed
+    within our max hold. The top `trimmed_top_frac` of copied returns is dropped, so the edge
+    can't rest on two or three lottery tickets (seen live: +43%/trade mean, -3% without the
+    top 10%)."""
     floor = max(cfg.replay_min_buy_sol * LAMPORTS_PER_SOL, cfg.bait_size_frac * median_buy_lamports)
-    return [copy_return(c.roi, cfg) for c in sold if c.first_buy_sol >= floor]
+    max_hold = cfg.replay_max_hold_minutes * 60
+    returns = sorted(copy_return(c.roi, cfg) for c in sold if c.first_buy_sol >= floor and c.hold_s <= max_hold)
+    drop = int(len(returns) * cfg.trimmed_top_frac)
+    return returns[: len(returns) - drop] if drop else returns
 
 
 def _clip(x: float) -> float:
