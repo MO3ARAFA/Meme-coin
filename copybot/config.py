@@ -66,13 +66,35 @@ class ScorerConfig(BaseModel):
     # Latency-adjusted copy replay: re-price every copyable historical trade as WE would
     # have filled it (entry worse by the penalty, our fee cap paid on both legs). The edge
     # must survive this, equal-weighted like our fixed position sizing.
-    replay_entry_penalty: float = 0.025
+    # Convex imitation penalty: a follower pays more the bigger the whale's own buy was.
+    #   entry penalty = base + min(cap, whale_buy_sol * per_sol)   (+ our fee cap on both legs)
+    replay_entry_penalty: float = 0.015  # base copy latency
+    replay_penalty_per_sol: float = 0.008
+    replay_penalty_cap: float = 0.06
     replay_leg_fee: float = 0.012
     replay_exit_penalty: float = 0.0
     replay_min_buy_sol: float = 0.25  # buys the live gate would skip anyway are not replayed
     # Our exit engine force-closes at EXITS__MAX_HOLD_MINUTES: whale gains realized after that
     # were never available to us, so those trades are not replayed.
     replay_max_hold_minutes: float = 240.0
+    # Moonbag replay: mirrors the live exit engine. Trades whose copied return reached the
+    # scale-out level sell half there and ride the rest to the whale's exit (no time cap);
+    # losses are capped near our hard stop.
+    replay_scale_out: float = 0.45
+    replay_loss_floor: float = -0.30  # hard stop -22% plus slippage
+    # Anti-farm: scripted wallets trade on timers (low coefficient of variation of gaps).
+    min_timing_cv: float = 0.35
+    timing_cv_min_samples: int = 30
+    # Fingerprint sybil merge: near-identical execution fingerprint AND co-buying the same
+    # tokens within the window, on >= this many tokens. Fingerprint alone is not enough:
+    # thousands of independent users share the defaults of one trading frontend.
+    fingerprint_similarity: float = 0.90
+    co_buy_window_s: float = 60.0
+    co_buy_min_tokens: int = 2
+    # Co-slot cabal detection (finalists only; RPC heavy)
+    cabal_sample_buys: int = 40
+    max_co_slot_ratio: float = 0.25
+    max_bundled_buy_ratio: float = 0.20  # buys whose tx also delivered the token to other wallets
     replay_min_trades: int = 15
     replay_min_profit_factor: float = 1.35
     replay_min_expectancy: float = 0.0
@@ -101,6 +123,9 @@ class HarvestConfig(BaseModel):
     deep_history_txs: int = 250
     min_profitable_tokens: int = 2
     top_n: int = 40
+    co_buyer_trades: int = 30  # seed's most profitable trades to mine for leaders
+    co_buyer_sample: int = 150  # transactions sampled per trade window
+    co_buyer_window_s: float = 900.0
 
 
 class SafetyConfig(BaseModel):
@@ -116,6 +141,18 @@ class SafetyConfig(BaseModel):
     max_signal_age_s: float = 25.0  # whale tx older than this (e.g. after a reconnect) is stale
     bait_size_frac: float = 0.30  # whale buy < 30% of its median buy size = inducement bait -> abort
     cluster_window_s: float = 600.0  # 2+ independent approved wallets buying within this = cluster
+    # Holder distribution (getTokenLargestAccounts, runs in parallel with the other checks).
+    # Pools, LP vaults, bonding curves and burn addresses are excluded before measuring.
+    holder_check: bool = True
+    max_top5_holder_pct: float = 0.35
+    max_single_holder_pct: float = 0.12
+    identical_holder_tolerance: float = 0.002  # amounts within 0.2% of each other ...
+    identical_holder_min_count: int = 4  # ... held by >= 4 top wallets = bundler split (3 gave false positives on 45 live tokens)
+    identical_holder_min_pct: float = 0.005  # each of those >= 0.5% of supply
+    # Per-wallet imitation budget: abort if (our price drift vs the whale + round-trip cost)
+    # eats this fraction of the wallet's historical raw edge.
+    max_edge_consumed: float = 0.65
+    reject_bundled_whale_buy: bool = True  # whale's buy tx also delivered tokens to other wallets
     min_whale_buy_sol: float = 0.25  # ignore dust buys (often bait)
     gate_latency_budget_ms: int = 300  # target; logged when exceeded
     gate_hard_timeout_ms: int = 2500  # abort the copy if checks take longer than this
@@ -127,14 +164,15 @@ class ExitConfig(BaseModel):
     whale_sell_trigger_frac: float = 0.30
     scale_out_profit: float = 0.45
     scale_out_fraction: float = 0.50
-    breakeven_stop_profit: float = 0.02
+    moonbag_floor_profit: float = 0.15  # after the scale-out, the runner never gives back below +15%
     hard_stop_loss: float = 0.22
     trailing_activation_profit: float = 0.25
     trailing_stop_pct: float = 0.15
     time_decay_minutes: float = 45.0
     time_decay_min_profit: float = 0.15
-    max_hold_minutes: float = 240.0  # absolute cap: never bag-hold a memecoin overnight
-    cluster_trailing_stop_pct: float = 0.25  # wider trail for the runner of a HIGH_CONVICTION_CLUSTER
+    max_hold_minutes: float = 240.0  # cap for UNSCALED positions only; a de-risked moonbag runs uncapped
+    moonbag_trailing_stop_pct: float = 0.25  # runner trail after the scale-out
+    cluster_trailing_stop_pct: float = 0.30  # runner trail for a HIGH_CONVICTION_CLUSTER
     # Auto-quarantine: a wallet that dumps this fast after its own buy, this many times, is
     # hunting copy-traders and is removed from the approved list.
     fast_dump_window_s: float = 90.0
@@ -151,6 +189,9 @@ class RiskConfig(BaseModel):
 
     position_size_frac: float = 0.10
     max_open_positions: int = 3
+    # A moonbag has already returned its capital and sits above a +15% floor: it is not risk.
+    # Counting it toward the limit would let one uncapped runner block new entries for days.
+    moonbags_count_toward_limit: bool = False
     max_leg_cost_pct: float = 0.012  # DEX fee + price impact + network fee, per leg
     min_priority_fee_lamports: int = 10_000
     max_priority_fee_lamports: int = 2_000_000
@@ -159,6 +200,28 @@ class RiskConfig(BaseModel):
     halt_hours: float = 24.0
     sol_reserve: float = 0.02  # never trade below this: rent + fees for exits
     entry_slippage_bps: int = 200
+
+
+class LLMConfig(BaseModel):
+    """Optional AI forensics (Anthropic-compatible endpoint). Never in the pre-buy hot path;
+    every call is async, time-boxed and fail-safe: if the model is unreachable the bot runs
+    on its quantitative rules alone."""
+
+    base_url: str = ""  # empty = Anthropic API
+    api_key: str = ""
+    model: str = ""  # empty = auto-probe `probe_models` in order
+    probe_models: list[str] = Field(default_factory=lambda: [
+        "claude-sonnet-5-5", "claude-opus-5-5", "claude-sonnet-5", "claude-sonnet-4-6",
+        "claude-sonnet-4-20250514", "claude-3-7-sonnet-latest", "claude-3-5-sonnet-latest",
+    ])
+    timeout_s: float = 45.0
+    max_risk_score: int = 30  # AI risk above this vetoes an approval (veto only, never approves)
+    eject_trap_probability: float = 0.75  # needs an on-chain red flag too
+    overwatch_delay_s: float = 2.0
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.api_key)
 
 
 class LiveGateConfig(BaseModel):
@@ -218,6 +281,7 @@ class Settings(BaseSettings):
     exits: ExitConfig = Field(default_factory=ExitConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     live_gate: LiveGateConfig = Field(default_factory=LiveGateConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
 
     @field_validator("listener_mode")
     @classmethod

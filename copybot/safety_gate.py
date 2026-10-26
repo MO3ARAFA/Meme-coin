@@ -23,6 +23,7 @@ from .jupiter import JupiterClient, NoRouteError, Quote
 from .risk_config import FeeBudget, RiskManager, per_leg_cost_from_roundtrip
 from .solana_rpc import SolanaRpc
 from .state import BotState
+from .cabal_detector import HolderReport, holder_distribution
 from .token_security import MintInfo, inspect_mint
 from .tx_parser import Side, SwapEvent
 
@@ -36,6 +37,7 @@ class WalletProfile:
     address: str
     median_buy_sol: float = 0.0
     link_group: int | None = None
+    expected_edge_pct: float = 0.0  # wallet's historical raw edge per copyable trade
 
     def independent_of(self, other: "WalletProfile") -> bool:
         if self.address == other.address:
@@ -58,6 +60,8 @@ class GateResult:
     chase_pct: float = 0.0
     roundtrip_return: float = 0.0
     fee_budget: FeeBudget | None = None
+    holders: HolderReport | None = None
+    edge_consumed: float = 0.0  # (price drift + round-trip cost) / wallet's historical raw edge
 
     def summary(self) -> str:
         head = "PASS" if self.passed else "ABORT"
@@ -70,6 +74,10 @@ class GateResult:
             parts.append(f"chase={self.chase_pct:+.1%}")
         if self.roundtrip_return:
             parts.append(f"roundtrip={self.roundtrip_return - 1:+.2%}")
+        if self.holders and self.holders.holders:
+            parts.append(f"top5={self.holders.top5_pct:.0%}")
+        if self.edge_consumed:
+            parts.append(f"edge_used={self.edge_consumed:.0%}")
         if self.reasons:
             parts.append("reasons: " + "; ".join(self.reasons))
         return " | ".join(parts)
@@ -179,13 +187,32 @@ class SafetyGate:
             log.debug("gate latency %.0fms over %dms budget", res.latency_ms, self.cfg.gate_latency_budget_ms)
         return res
 
+    async def _holders(self, mint: str, pairs_t: asyncio.Task, mint_t: asyncio.Task) -> HolderReport:
+        info = await mint_t
+        pairs = await pairs_t
+        pools = {p.pair_address for p in pairs.get(mint, [])}
+        return await holder_distribution(
+            self.rpc, mint, info.supply_raw, exclude=pools,
+            tolerance=self.cfg.identical_holder_tolerance, min_pct=self.cfg.identical_holder_min_pct,
+        )
+
     async def _remote_checks(self, ev: SwapEvent, size_lamports: int, res: GateResult) -> None:
         cfg = self.cfg
         pairs_t = asyncio.create_task(self.dex.pairs_for_tokens([ev.mint]))
         mint_t = asyncio.create_task(self.mint_info(ev.mint))
         buy_t = asyncio.create_task(self.jupiter.quote(WSOL_MINT, ev.mint, size_lamports, self.entry_slippage_bps))
         whale_px_t = asyncio.create_task(self.whale_price_lamports(ev))
+        holders_t = asyncio.create_task(self._holders(ev.mint, pairs_t, mint_t)) if cfg.holder_check else None
         pairs_r, mint_r, buy_r, whale_r = await asyncio.gather(pairs_t, mint_t, buy_t, whale_px_t, return_exceptions=True)
+        if holders_t is not None:
+            holders_r = (await asyncio.gather(holders_t, return_exceptions=True))[0]
+            if isinstance(holders_r, Exception):
+                # Fail closed on concentration data, like every other gate input.
+                res.reasons.append(f"holder distribution unavailable: {holders_r}")
+            else:
+                res.holders = holders_r
+                res.reasons.extend(holders_r.problems(cfg.max_top5_holder_pct, cfg.max_single_holder_pct,
+                                                      cfg.identical_holder_min_count))
 
         # 1. Liquidity & market cap
         if isinstance(pairs_r, Exception):
@@ -246,6 +273,18 @@ class SafetyGate:
         if loss > cfg.max_roundtrip_loss_pct:
             res.reasons.append(f"round-trip loss {loss:.2%} > {cfg.max_roundtrip_loss_pct:.2%} (tax/fees/impact)")
             return
+
+        # 4b. Imitation budget: has the follower's handicap already eaten this wallet's edge?
+        profile = self.profiles.get(ev.wallet)
+        if profile and profile.expected_edge_pct > 0:
+            res.edge_consumed = (max(res.chase_pct, 0.0) + loss) / profile.expected_edge_pct
+            if res.edge_consumed >= cfg.max_edge_consumed:
+                res.reasons.append(
+                    f"imitation penalty ate the alpha: drift {max(res.chase_pct, 0):.1%} + round trip {loss:.1%} "
+                    f"= {res.edge_consumed:.0%} of this wallet's {profile.expected_edge_pct:.0%} edge "
+                    f"(max {cfg.max_edge_consumed:.0%})"
+                )
+                return
 
         # 5. Fee guard (Module D): DEX fee + impact + network fee <= cap, per leg
         budget = self.risk.fee_budget(size_lamports, per_leg_cost_from_roundtrip(res.roundtrip_return))

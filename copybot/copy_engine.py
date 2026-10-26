@@ -28,6 +28,9 @@ from .jupiter import JupiterClient, NoRouteError
 from .listener import WalletListener
 from .notifier import Notifier
 from .risk_config import RiskManager
+from .ai_analyst import AIAnalyst
+from .cabal_detector import bundled_recipients, holder_distribution
+from .evidence import EvidenceLedger
 from .safety_gate import GateResult, SafetyGate, WalletProfile
 from .solana_rpc import SolanaRpc
 from .state import Position, PositionStatus, StateStore, TradeJournal, save_json
@@ -45,7 +48,8 @@ def load_approved_wallets(path: Path) -> dict[str, WalletProfile]:
     for r in rows:
         if isinstance(r, dict):
             profiles[r["address"]] = WalletProfile(
-                r["address"], float(r.get("median_buy_sol") or 0.0), r.get("link_group")
+                r["address"], float(r.get("median_buy_sol") or 0.0), r.get("link_group"),
+                float(r.get("expected_edge_pct") or 0.0),
             )
         else:
             profiles[str(r)] = WalletProfile(str(r))
@@ -109,7 +113,9 @@ class CopyEngine:
         self._tasks: set[asyncio.Task] = set()
         self.wallets: list[str] = []
         self.profiles: dict[str, WalletProfile] = {}
-        self.recent_buys: dict[str, dict[str, float]] = {}  # mint -> wallet -> buy time
+        self.recent_buys: dict[str, dict[str, tuple[float, int]]] = {}  # mint -> wallet -> (buy time, slot)
+        self.evidence = EvidenceLedger(settings.data_dir / "evidence.jsonl")
+        self.analyst = AIAnalyst(settings.llm)
 
     def spawn(self, coro) -> asyncio.Task:
         """Fire-and-forget with a strong reference (the event loop only keeps weak ones)."""
@@ -138,7 +144,7 @@ class CopyEngine:
         self._update_whale_holdings(wallet, tx)
         for ev in extract_swaps(tx, wallet):
             if ev.side is Side.BUY:
-                await self.handle_buy(ev)
+                await self.handle_buy(ev, tx)
             else:
                 log.info("whale %s SOLD %.0f%% of %s", wallet[:6], ev.sold_fraction * 100, ev.mint[:8])
         self.save()
@@ -176,6 +182,8 @@ class CopyEngine:
             self.store.state.quarantined.append(pos.whale)
             reason = f"{strikes} dumps within {self.s.exits.fast_dump_window_s:.0f}s of its own buy"
             quarantine_in_file(self.s.approved_wallets_path, pos.whale, reason)
+            self.evidence.record("QUARANTINE", wallet=pos.whale, mint=pos.mint, strikes=strikes,
+                                 held_s=round(held, 1), whale_slot=pos.whale_slot, reason=reason)
             self.spawn(self.notifier.send(f"🚫 QUARANTINED {pos.whale}: copy-trader hunter ({reason})",
                                           level=logging.WARNING))
 
@@ -186,28 +194,41 @@ class CopyEngine:
         already-open position on that token is upgraded to HIGH_CONVICTION_CLUSTER."""
         now = float(ev.block_time or time.time())
         window = self.s.safety.cluster_window_s
-        for mint in [m for m, b in self.recent_buys.items() if max(b.values()) < now - window]:
+        for mint in [m for m, b in self.recent_buys.items() if max(t for t, _ in b.values()) < now - window]:
             del self.recent_buys[mint]
         buys = self.recent_buys.setdefault(ev.mint, {})
-        buys[ev.wallet] = now
+        buys[ev.wallet] = (now, ev.slot)
         me = self.profiles.get(ev.wallet, WalletProfile(ev.wallet))
+        # Independent = different link group (transfers / fingerprint) AND not in the same or an
+        # adjacent slot: two wallets landing together are one bundle, not two opinions.
         others = [
-            w for w, t in buys.items()
+            w for w, (t, slot) in buys.items()
             if now - t <= window and me.independent_of(self.profiles.get(w, WalletProfile(w)))
+            and (not ev.slot or not slot or abs(ev.slot - slot) > 1)
         ]
         for pos in self.store.state.open_positions():
             if pos.mint == ev.mint and not pos.high_conviction and pos.whale in others:
                 pos.high_conviction = True
+                pos.tier = "CLUSTER"
                 pos.cluster_wallets = sorted({pos.whale, ev.wallet})
+                self.evidence.record("CLUSTER_UPGRADE", mint=pos.mint, wallets=pos.cluster_wallets, slot=ev.slot,
+                                     signature=ev.signature)
                 log.info("HIGH_CONVICTION_CLUSTER %s: independent wallets %s",
                          pos.symbol or pos.mint[:8], [w[:6] for w in pos.cluster_wallets])
         return others
 
-    async def handle_buy(self, ev: SwapEvent) -> None:
+    async def handle_buy(self, ev: SwapEvent, tx: dict | None = None) -> None:
         cluster = self._record_buy_and_cluster(ev)
         pre = self.gate.precheck(ev)
+        if tx is not None and self.s.safety.reject_bundled_whale_buy:
+            ring = bundled_recipients(tx, ev.wallet, ev.mint)
+            if ring:
+                pre.append(f"BUNDLE: the whale's buy tx also delivered tokens to {len(ring)} other wallet(s)")
         if pre:
             log.info("skip %s from %s: %s", ev.mint[:8], ev.wallet[:6], "; ".join(pre))
+            self.evidence.record("ABORT", stage="precheck", wallet=ev.wallet, mint=ev.mint, slot=ev.slot,
+                                 signature=ev.signature, whale_sol=ev.quote_amount_raw / LAMPORTS_PER_SOL,
+                                 reasons=pre)
             return
         async with self._entry_lock:  # serialize entries: position limits and no double-dip
             free = await self.executor.free_balance_lamports()
@@ -218,6 +239,17 @@ class CopyEngine:
                 return
             gate = await self.gate.evaluate(ev, sizing.lamports)
             log.info("gate %s", gate.summary())
+            self.evidence.record(
+                "COPY" if gate.passed else "ABORT", stage="gate", wallet=ev.wallet, mint=ev.mint, slot=ev.slot,
+                signature=ev.signature, whale_sol=ev.quote_amount_raw / LAMPORTS_PER_SOL,
+                imitation_drift_pct=round(gate.chase_pct * 100, 2),
+                roundtrip_cost_pct=round((1 - gate.roundtrip_return) * 100, 2) if gate.roundtrip_return else None,
+                edge_consumed_pct=round(gate.edge_consumed * 100, 1) if gate.edge_consumed else None,
+                holder_top5_pct=round(gate.holders.top5_pct * 100, 1) if gate.holders else None,
+                holder_max_pct=round(gate.holders.max_single_pct * 100, 1) if gate.holders else None,
+                liquidity_usd=gate.pair.liquidity_usd if gate.pair else None,
+                tier="CLUSTER" if cluster else "SOLO", latency_ms=round(gate.latency_ms), reasons=gate.reasons,
+            )
             if not gate.passed:
                 return
             await self._enter(ev, sizing.lamports, gate, cluster)
@@ -261,6 +293,8 @@ class CopyEngine:
             whale_balance_raw=ev.token_balance_after_raw,
             whale_entry_time=float(ev.block_time) if ev.block_time else time.time(),
             high_conviction=bool(cluster),
+            tier="CLUSTER" if cluster else "SOLO",
+            whale_slot=ev.slot,
             cluster_wallets=sorted(set(cluster) | {ev.wallet}) if cluster else [],
             entry_tx=fill.signature,
         )
@@ -286,8 +320,61 @@ class CopyEngine:
         await self.notifier.send(
             f"{'🟢 LIVE' if self.s.is_live else '📝 SHADOW'} BUY {symbol} {ev.mint} for {sol(fill.lamports)} "
             f"(whale {ev.wallet[:6]}…, chase {gate.chase_pct:+.1%}, round-trip {gate.roundtrip_return - 1:+.2%}, "
-            f"gate {gate.latency_ms:.0f}ms)"
+            f"gate {gate.latency_ms:.0f}ms, {pos.tier})"
         )
+        self.spawn(self.overwatch(pos, gate))
+
+    async def overwatch(self, pos: Position, gate: GateResult) -> None:
+        """Post-buy audit, off the hot path. Re-reads holders, liquidity and order flow a moment
+        after the fill. Hard on-chain flags eject on their own; the AI may only eject when it is
+        confident AND at least one on-chain flag backs it."""
+        await asyncio.sleep(self.s.llm.overwatch_delay_s)
+        if pos.status is not PositionStatus.OPEN:
+            return
+        cfg = self.s.safety
+        hard: list[str] = []
+        soft: list[str] = []
+        facts: dict = {"mint": pos.mint, "symbol": pos.symbol, "tier": pos.tier, "whale": pos.whale}
+        try:
+            supply = gate.mint_info.supply_raw if gate.mint_info else 0
+            pools = {gate.pair.pair_address} if gate.pair else set()
+            holders = await holder_distribution(self.rpc, pos.mint, supply, exclude=pools,
+                                                tolerance=cfg.identical_holder_tolerance, min_pct=cfg.identical_holder_min_pct)
+            facts["holders_top5_pct"] = round(holders.top5_pct * 100, 1)
+            facts["holder_max_pct"] = round(holders.max_single_pct * 100, 1)
+            facts["top_holders"] = [(o[:8], round(p * 100, 2)) for o, p in holders.holders[:10]]
+            hard += holders.problems(cfg.max_top5_holder_pct, cfg.max_single_holder_pct, cfg.identical_holder_min_count)
+        except Exception as exc:
+            log.debug("overwatch holders failed: %s", exc)
+        try:
+            pair = await self.dex.best_pair(pos.mint)
+            if pair:
+                facts.update(liquidity_usd=pair.liquidity_usd, m5_buys=pair.txns_m5[0], m5_sells=pair.txns_m5[1],
+                             volume_h1_usd=pair.volume_h1_usd)
+                if gate.pair and gate.pair.liquidity_usd and pair.liquidity_usd is not None \
+                        and pair.liquidity_usd < 0.7 * gate.pair.liquidity_usd:
+                    hard.append(f"liquidity fell {1 - pair.liquidity_usd / gate.pair.liquidity_usd:.0%} since entry (pull in progress)")
+                buys, sells = pair.txns_m5
+                if sells >= 20 and sells > 3 * max(buys, 1):
+                    soft.append(f"sell pressure: {sells} sells vs {buys} buys in 5 min")
+        except Exception as exc:
+            log.debug("overwatch dex failed: %s", exc)
+        facts["onchain_flags"] = hard + soft
+        verdict = await self.analyst.overwatch(facts) if self.analyst.available else None
+        trap = verdict["trap_probability"] if verdict else None
+        reason = ""
+        if hard:
+            reason = "; ".join(hard)
+        elif verdict and trap >= self.s.llm.eject_trap_probability and soft:
+            reason = f"AI trap probability {trap:.0%} + {'; '.join(soft)}"
+        self.evidence.record("OVERWATCH", mint=pos.mint, wallet=pos.whale, slot=pos.whale_slot,
+                             signature=pos.signal_signature, flags=hard + soft, trap_probability=trap,
+                             ai_rationale=(verdict or {}).get("rationale"), eject=bool(reason))
+        if reason:
+            pos.eject_reason = reason
+            self.evidence.record("EJECT", mint=pos.mint, wallet=pos.whale, reason=reason)
+            log.warning("AI_EMERGENCY_EJECT %s: %s", pos.symbol or pos.mint[:8], reason)
+            await self.exits.evaluate(pos, force_quote=True)
 
     # ---- exits -------------------------------------------------------------------------
     async def close_or_reduce(self, pos: Position, fraction: float, reason: str, *, emergency: bool = False) -> None:
@@ -336,6 +423,9 @@ class CopyEngine:
                 pos.rent_lamports = 0
         else:
             apply_partial_exit(pos, self.s.exits)
+        self.evidence.record("EXIT" if pos.status is PositionStatus.CLOSED else "EXIT_PARTIAL", mint=pos.mint,
+                             wallet=pos.whale, tier=pos.tier, reason=reason, signature=fill.signature,
+                             net_return_pct=round(pos.net_return * 100, 2) if pos.status is PositionStatus.CLOSED else None)
         self._journal_exit(pos, "EXIT" if pos.status is PositionStatus.CLOSED else "EXIT_PARTIAL", reason, fill.lamports,
                            sold, fill.fees_lamports, fill.signature)
         self.save()
@@ -402,6 +492,8 @@ class CopyEngine:
                      "".join(f"\n  - {describe(p)}" for p in opens))
 
     async def run(self) -> None:
+        await self.analyst.probe()
+        log.info("AI overwatch: %s", self.analyst.status)
         self.profiles = load_approved_wallets(self.s.approved_wallets_path)
         self.gate.profiles = self.profiles
         self.wallets = list(self.profiles)

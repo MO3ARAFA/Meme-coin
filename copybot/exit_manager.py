@@ -1,14 +1,21 @@
 """Module C — independent exit engine.
 
 We never wait for the whale to finish selling. Every open position is re-evaluated against
-five triggers; whichever fires first wins:
+these triggers; whichever fires first wins:
 
   1. Whale exit      — the copied wallet sold >= 30% of its peak holding  -> sell 100%
-  2. Hard stop       — net value <= -22% (or <= +2% break-even after scale-out) -> sell 100%
-  3. Trailing stop   — once peak >= +25%, a 15% drop from the peak       -> sell 100%
-  4. Scale-out       — net value >= +45% the first time                   -> sell 50%, stop -> +2%
-  5. Time decay      — 45 min without ever reaching +15%                  -> sell 100%
-  (+ an absolute max-hold cap, and an emergency exit if the sell route disappears)
+  2. AI/on-chain eject — post-buy overwatch found a coordinated trap      -> sell 100%
+  3. Hard stop       — net value <= -22%                                  -> sell 100%
+  4. Trailing stop   — once peak >= +25%, a 15% drop from the peak       -> sell 100%
+  5. Scale-out       — net value >= +45% the first time                   -> sell 50%
+  6. Time decay      — 45 min without ever reaching +15%                  -> sell 100%
+  7. Max hold        — 4 h                                                -> sell 100%
+  (+ an emergency exit if the sell route disappears)
+
+Chameleon / moonbag: after the scale-out the position is house money. The remaining half
+becomes an uncapped runner: no time-decay or max-hold timer (a 4 h cap would have cut the
+6-17 h multi-baggers seen in real whale histories), a hard floor at +15%, and a wide trail
+(25%, or 30% for a HIGH_CONVICTION_CLUSTER). The whale-exit trigger still applies.
 
 "Value" is always what we would really receive: a Jupiter SELL quote for our exact token
 amount, i.e. net of DEX fees and price impact — not the chart price. Between quote refreshes
@@ -58,14 +65,18 @@ def decide_exit(pos: Position, ratio: float | None, now: float, cfg: ExitConfig)
     `pos.peak_ratio` must already include `ratio`."""
     if pos.whale_sold_frac >= cfg.whale_sell_trigger_frac:
         return ExitDecision(Action.SELL, 1.0, f"whale sold {pos.whale_sold_frac:.0%} of its bag")
+    if pos.eject_reason:
+        return ExitDecision(Action.SELL, 1.0, f"AI_EMERGENCY_EJECT: {pos.eject_reason}")
 
     age_min = (now - pos.opened_at) / 60.0
     if ratio is not None:
         if ratio <= pos.stop_ratio:
-            kind = "break-even stop" if pos.scaled_out else "hard stop"
+            kind = "moonbag floor" if pos.scaled_out else "hard stop"
             return ExitDecision(Action.SELL, 1.0, f"{kind} at {ratio - 1:+.1%}")
-        # The runner of an independent-cluster position gets room to run after the scale-out.
-        trail = cfg.cluster_trailing_stop_pct if (pos.high_conviction and pos.scaled_out) else cfg.trailing_stop_pct
+        if pos.scaled_out:  # house-money runner: wide trail, no timers
+            trail = cfg.cluster_trailing_stop_pct if pos.high_conviction else cfg.moonbag_trailing_stop_pct
+        else:
+            trail = cfg.trailing_stop_pct
         if pos.peak_ratio >= 1 + cfg.trailing_activation_profit and ratio <= pos.peak_ratio * (1 - trail):
             return ExitDecision(
                 Action.SELL, 1.0, f"trailing stop ({trail:.0%}): {ratio - 1:+.1%} from peak {pos.peak_ratio - 1:+.1%}"
@@ -73,6 +84,8 @@ def decide_exit(pos: Position, ratio: float | None, now: float, cfg: ExitConfig)
         if not pos.scaled_out and ratio >= 1 + cfg.scale_out_profit:
             return ExitDecision(Action.SELL, cfg.scale_out_fraction, f"scale-out at {ratio - 1:+.1%}")
 
+    if pos.scaled_out:
+        return HOLD  # the moonbag is never cut by a timer
     if age_min >= cfg.time_decay_minutes and pos.peak_ratio < 1 + cfg.time_decay_min_profit:
         return ExitDecision(Action.SELL, 1.0, f"time decay: {age_min:.0f}min, peak {pos.peak_ratio - 1:+.1%}")
     if age_min >= cfg.max_hold_minutes:
@@ -81,9 +94,9 @@ def decide_exit(pos: Position, ratio: float | None, now: float, cfg: ExitConfig)
 
 
 def apply_partial_exit(pos: Position, cfg: ExitConfig) -> None:
-    """State change after a scale-out fill: lock in break-even on the remainder."""
+    """State change after a scale-out fill: the remainder becomes a moonbag with a +15% floor."""
     pos.scaled_out = True
-    pos.stop_ratio = max(pos.stop_ratio, 1 + cfg.breakeven_stop_profit)
+    pos.stop_ratio = max(pos.stop_ratio, 1 + cfg.moonbag_floor_profit)
 
 
 class ExitManager:

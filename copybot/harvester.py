@@ -227,7 +227,7 @@ async def prescreen(rpc: SolanaRpc, cands: list[Candidate], settings: Settings) 
 async def deep_check(scorer: WalletScorer, c: Candidate, sigs: list[dict], settings: Settings, usd_per_sol: float) -> None:
     """Realized-profit check on the wallet's own recent history, across ALL tokens it traded."""
     scfg = settings.scorer
-    cycles, _, _ = await scorer.history(c.address, sigs[: settings.harvest.deep_history_txs], usd_per_sol)
+    cycles = (await scorer.history(c.address, sigs[: settings.harvest.deep_history_txs], usd_per_sol)).cycles
     sold = [
         cy for cy in cycles
         if cy.outcome == "sold"
@@ -302,4 +302,96 @@ async def run_harvest(settings: Settings, client: httpx.AsyncClient, rpc: Solana
         "winners": [c.address for c in winners],
     })
     log.info("wrote %d multi-token winners -> %s", len(winners), settings.seed_wallets_path)
+    return winners
+
+
+# ---------------------------------------------------------------------------------------
+# Co-buyer graph discovery (`harvest --co-buyers`)
+# ---------------------------------------------------------------------------------------
+async def co_buyers_of(rpc: SolanaRpc, scorer: WalletScorer, seed: str, settings: Settings,
+                       usd_per_sol: float) -> dict[str, dict]:
+    """Wallets that bought the seed's profitable tokens up to `window_s` BEFORE the seed did.
+
+    Only leaders count. Wallets buying right AFTER a tracked whale are mostly copy-bots — the
+    opposite of what we want — and wallets in the seed's own slot (or the one before) are
+    bundle partners, which the cabal check exists to reject.
+    """
+    scfg, hcfg = settings.scorer, settings.harvest
+    max_trades, window_s, sample = hcfg.co_buyer_trades, hcfg.co_buyer_window_s, hcfg.co_buyer_sample
+    hist = await scorer.history(seed, await scorer.signatures(seed), usd_per_sol)
+    winners = sorted(
+        (c for c in hist.cycles if c.outcome == "sold" and c.pnl > 0 and c.first_buy_sig
+         and c.sol_in >= scfg.min_cycle_buy_sol * LAMPORTS_PER_SOL and c.roi <= scfg.max_cycle_roi),
+        key=lambda c: c.pnl, reverse=True,
+    )[:max_trades]
+    min_lamports = settings.harvest.min_swap_sol * LAMPORTS_PER_SOL
+    found: dict[str, dict] = {}
+    for cyc in winners:
+        try:
+            rows = await rpc.get_signatures_for_address(cyc.mint, limit=500, before=cyc.first_buy_sig)
+        except Exception as exc:
+            log.debug("co-buyer sigs %s: %s", cyc.mint[:6], exc)
+            continue
+        window = [r for r in rows if r.get("err") is None and r.get("blockTime")
+                  and r["blockTime"] >= cyc.opened_at - window_s and r.get("slot", 0) < cyc.first_buy_slot - 1]
+        txs = await asyncio.gather(*(scorer.transaction(r["signature"]) for r in evenly_spaced(window, sample)))
+        for tx in txs:
+            if not tx:
+                continue
+            keys = tx["transaction"]["message"]["accountKeys"]
+            payer = keys[0]["pubkey"] if isinstance(keys[0], dict) else keys[0]
+            if payer == seed:
+                continue
+            for ev in extract_swaps(tx, payer):
+                lamports = ev.quote_amount_raw if ev.is_sol_quoted else ev.quote_amount_raw / 1e6 / usd_per_sol * LAMPORTS_PER_SOL
+                if ev.mint == cyc.mint and ev.side.value == "BUY" and lamports >= min_lamports:
+                    row = found.setdefault(payer, {})
+                    lead = cyc.opened_at - int(tx["blockTime"])
+                    row[cyc.mint] = {"buys": 1, "sells": 0, "sol": lamports / LAMPORTS_PER_SOL, "lead_s": lead}
+        log.info("  seed %s… token %s… (+%.2f SOL): %d leader buys in the %.0f min before",
+                 seed[:6], cyc.mint[:6], cyc.pnl / LAMPORTS_PER_SOL, len(window), window_s / 60)
+    return found
+
+
+async def run_co_buyer_harvest(settings: Settings, rpc: SolanaRpc, dex: DexScreenerClient, jupiter: JupiterClient,
+                               seeds: list[str]) -> list[Candidate]:
+    cfg = settings.harvest
+    q = await jupiter.quote(WSOL_MINT, USDC_MINT, LAMPORTS_PER_SOL, 50)
+    usd_per_sol = q.out_amount / 1e6
+    scorer = WalletScorer(settings, rpc, dex, jupiter)
+    cands: dict[str, Candidate] = {}
+    for seed in seeds:
+        log.info("co-buyer discovery around %s…", seed[:8])
+        for wallet, tokens in (await co_buyers_of(rpc, scorer, seed, settings, usd_per_sol)).items():
+            cands.setdefault(wallet, Candidate(wallet)).tokens.update(tokens)
+    # Leaders on >= 2 of the seed's winners first, then the largest single-token leaders; the
+    # deep check verifies multi-token profit on each wallet's own history either way.
+    ranked = rank_candidates(cands)
+    to_screen = ranked[: cfg.max_deep_checks * 2]
+    log.info("%d co-buyers found (%d on >= 2 winning tokens); pre-screening %d",
+             len(cands), sum(1 for c in cands.values() if len(c.tokens) >= 2), len(to_screen))
+    survivors = await prescreen(rpc, to_screen, settings)
+    deep = [c for c in to_screen if c.address in survivors][: cfg.max_deep_checks]
+    for i, c in enumerate(deep, 1):
+        try:
+            await deep_check(scorer, c, survivors[c.address], settings, usd_per_sol)
+        except Exception as exc:
+            c.status = f"deep check failed: {exc}"
+            continue
+        log.info("  [%d/%d] %s… co-bought %d winners, %d closed, win %.0f%%, profitable in %d tokens, pnl %+.2f SOL",
+                 i, len(deep), c.address[:8], len(c.tokens), c.closed_trades, c.win_rate * 100,
+                 c.profitable_tokens, c.realized_pnl_sol)
+    winners = sorted((c for c in deep if c.profitable_tokens >= cfg.min_profitable_tokens),
+                     key=lambda c: (c.realized_pnl_sol > 0, len(c.tokens), c.realized_pnl_sol), reverse=True)[: cfg.top_n]
+    lines = [f"# co-buyer harvest {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())} around {len(seeds)} seed(s): "
+             f"{len(cands)} leaders, {len(survivors)} pre-screened, {len(winners)} multi-token winners"]
+    lines += [f"{s}  # seed (already approved)" for s in seeds]
+    lines += [f"{c.address}  # led seed on {len(c.tokens)} winners; {c.profitable_tokens} profitable tokens, "
+              f"{c.closed_trades} closed, win {c.win_rate:.0%}, {c.realized_pnl_sol:+.2f} SOL" for c in winners]
+    settings.seed_wallets_path.write_text("\n".join(lines) + "\n")
+    save_json(settings.data_dir / "co_buyer_report.json", {
+        "seeds": seeds, "candidates": [asdict(c) for c in ranked[: cfg.max_deep_checks * 2]],
+        "winners": [c.address for c in winners],
+    })
+    log.info("wrote %d seeds + %d co-buyer winners -> %s", len(seeds), len(winners), settings.seed_wallets_path)
     return winners

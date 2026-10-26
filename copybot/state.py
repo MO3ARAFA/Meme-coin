@@ -62,6 +62,9 @@ class Position(BaseModel):
     # HIGH_CONVICTION_CLUSTER: another independent approved wallet bought within the window.
     high_conviction: bool = False
     cluster_wallets: list[str] = Field(default_factory=list)
+    tier: str = "SOLO"  # SOLO | CLUSTER
+    eject_reason: str = ""  # set by the post-buy overwatch -> immediate full exit
+    whale_slot: int = 0
 
     status: PositionStatus = PositionStatus.OPEN
     closed_at: float | None = None

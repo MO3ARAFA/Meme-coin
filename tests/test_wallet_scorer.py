@@ -191,15 +191,36 @@ def test_counterparty_extraction_from_parsed_instructions():
     assert sol_counterparties(tx, "W", 5 * 10**7) == {"X", "Z"}  # Y below the link threshold
 
 
-def test_replay_ignores_gains_beyond_our_max_hold_and_lottery_outliers():
-    # 30 flat trades closed within 4h, plus 3 huge winners held 17h: the whale's edge is
-    # entirely in trades our exit engine would have closed long before.
-    events = trader(30, lambda i: 0.0 if i % 2 else 0.02, hold_s=1800)
+def test_moonbag_replay_captures_long_runners_but_lottery_wallets_still_fail():
+    # A gambler: 30 small trades, mostly losers, closed within 4h, plus 3 huge winners held 17h.
+    events = trader(30, lambda i: 0.02 if i % 3 == 0 else -0.05, hold_s=1800)
     t = int(NOW - 3600 * 30)
     for i in range(3):
         events.append(ev(t + i, Side.BUY, f"L{i}", 1.0, 10, 0, 10))
         events.append(ev(t + i + 17 * 3600, Side.SELL, f"L{i}", 15.0, 10, 10, 0))
     m = metrics(events)
-    assert m.replay_trades == 29  # 30 short trades (top 5% = 1 dropped); the 17h winners excluded
-    assert m.replay_expectancy < 0
-    assert any("copy latency" in r for r in m.rejections)
+    assert m.replay_trades == 32  # the 17h runners ARE replayed now (moonbag); top 5% (1) trimmed
+    assert not m.passed
+    assert any("win rate" in r for r in m.rejections)  # power-law luck on a losing base is not skill
+
+
+def test_moonbag_model_halves_at_scale_out_and_floors_losses():
+    from copybot.wallet_scorer import Cycle, moonbag_return
+
+    def cyc(roi, hold_h, buy_sol=0.5):
+        c = Cycle(mint="M", opened_at=0, sol_in=buy_sol * SOL, sol_out=buy_sol * SOL * (1 + roi), first_buy_sol=buy_sol * SOL)
+        c.closed_at = int(hold_h * 3600)
+        return c
+
+    big = moonbag_return(cyc(14.0, 17), CFG)  # 15x held 17 h
+    assert 6.5 < big < 7.5  # half sold at +45%, half rode the copy-adjusted ~13.9x
+    assert moonbag_return(cyc(0.30, 17), CFG) is None  # unscaled long hold: our timer -> unknowable
+    assert moonbag_return(cyc(-0.80, 2), CFG) == CFG.replay_loss_floor  # stop fired near -22%
+    assert moonbag_return(cyc(-0.80, 30), CFG) == CFG.replay_loss_floor  # big losers count even if held long
+    small, large = moonbag_return(cyc(0.20, 1, 0.3), CFG), moonbag_return(cyc(0.20, 1, 10.0), CFG)
+    assert large < small  # convex penalty: copying a 10 SOL whale costs more than a 0.3 SOL one
+
+
+def test_non_scratch_median_needs_enough_meaningful_trades():
+    m = metrics(trader(30, lambda i: 30.0 if i < 2 else 0.01, hold_s=1800))
+    assert m.nonscratch_median_roi == m.median_roi  # 2 non-scratch trades are not a "typical" trade

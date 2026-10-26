@@ -33,7 +33,7 @@ def setup_logging(verbose: bool) -> None:
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    for noisy in ("httpx", "httpcore", "websockets"):
+    for noisy in ("httpx", "httpcore", "httpx2", "httpcore2", "websockets"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
@@ -80,6 +80,12 @@ async def cmd_doctor(s: Settings) -> int:
         except Exception as exc:
             ok = False
             print(f"[FAIL] DexScreener: {exc}")
+    from copybot.ai_analyst import AIAnalyst
+
+    analyst = AIAnalyst(s.llm)
+    await analyst.probe()
+    tag = "[ok]" if analyst.available else ("[off]" if not s.llm.enabled else "[warn]")
+    print(f"{tag} AI forensics: {analyst.status}" + ("" if analyst.available else " — bot runs on quantitative rules only"))
     print("approved wallets:", "present" if s.approved_wallets_path.exists() else "missing (run `score`)")
     print("seed wallets:   ", "present" if s.seed_wallets_path.exists() else "missing (see docs/SEED_WALLETS.md)")
     return 0 if ok else 1
@@ -99,9 +105,10 @@ async def cmd_score(s: Settings) -> int:
     return 0 if any(m.passed for m in results) else 2
 
 
-async def cmd_harvest(s: Settings) -> int:
+async def cmd_harvest(s: Settings, co_buyers: bool = False, seeds: list[str] | None = None) -> int:
+    from copybot.copy_engine import load_approved_wallets
     from copybot.dexscreener import DexScreenerClient
-    from copybot.harvester import run_harvest
+    from copybot.harvester import run_co_buyer_harvest, run_harvest
     from copybot.jupiter import JupiterClient
     from copybot.solana_rpc import SolanaRpc
 
@@ -109,7 +116,11 @@ async def cmd_harvest(s: Settings) -> int:
         rpc = SolanaRpc(client, s.rpc_url, s.rpc_rps)
         dex = DexScreenerClient(client, s.dexscreener_base_url, s.dexscreener_rps)
         jup = JupiterClient(client, s.jupiter_base_url, s.jupiter_api_key, s.jupiter_rps)
-        winners = await run_harvest(s, client, rpc, dex, jup)
+        if co_buyers:
+            seeds = seeds or list(load_approved_wallets(s.approved_wallets_path))
+            winners = await run_co_buyer_harvest(s, rpc, dex, jup, seeds)
+        else:
+            winners = await run_harvest(s, client, rpc, dex, jup)
     return 0 if winners else 2
 
 
@@ -176,7 +187,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("doctor")
-    sub.add_parser("harvest")
+    hv = sub.add_parser("harvest")
+    hv.add_argument("--co-buyers", action="store_true",
+                    help="discover wallets that bought approved whales' winners BEFORE them")
+    hv.add_argument("--seed", action="append", help="seed wallet for --co-buyers (default: approved wallets)")
     sub.add_parser("score")
     ct = sub.add_parser("check-token")
     ct.add_argument("mint")
@@ -196,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "doctor":
             return asyncio.run(cmd_doctor(s))
         if args.cmd == "harvest":
-            return asyncio.run(cmd_harvest(s))
+            return asyncio.run(cmd_harvest(s, args.co_buyers, args.seed))
         if args.cmd == "score":
             return asyncio.run(cmd_score(s))
         if args.cmd == "check-token":

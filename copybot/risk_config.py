@@ -59,8 +59,9 @@ class RiskManager:
         if self.is_halted():
             left = (self.state.halted_until - time.time()) / 3600
             return SizingDecision(False, reason=f"circuit breaker active ({left:.1f}h left)")
-        if len(self.state.open_positions()) >= self.cfg.max_open_positions:
-            return SizingDecision(False, reason=f"max {self.cfg.max_open_positions} open positions")
+        at_risk = [p for p in self.state.open_positions() if self.cfg.moonbags_count_toward_limit or not p.scaled_out]
+        if len(at_risk) >= self.cfg.max_open_positions:
+            return SizingDecision(False, reason=f"max {self.cfg.max_open_positions} open positions at risk")
         equity = self.equity_lamports(free_lamports)
         size = int(equity * self.cfg.position_size_frac)
         reserve = int(self.cfg.sol_reserve * LAMPORTS_PER_SOL)

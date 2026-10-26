@@ -1,0 +1,4 @@
+# OPTIONAL: AI forensics layer (copybot/ai_analyst.py). The bot runs fully without it.
+# Install on top of requirements.txt:  pip install --require-hashes -r requirements-ai.txt
+-c requirements.txt
+anthropic==1.0.0          # official Anthropic SDK

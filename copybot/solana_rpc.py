@@ -123,6 +123,20 @@ class SolanaRpc:
             out.extend(res["value"])
         return out
 
+    async def get_multiple_accounts_parsed(self, addresses: list[str]) -> list[dict | None]:
+        out: list[dict | None] = []
+        for i in range(0, len(addresses), 100):
+            res = await self.call(
+                "getMultipleAccounts", [addresses[i : i + 100], {"encoding": "jsonParsed", "commitment": "confirmed"}]
+            )
+            out.extend(res["value"])
+        return out
+
+    async def get_token_largest_accounts(self, mint: str) -> list[dict]:
+        """Top-20 token accounts of a mint: [{address, amount, decimals, uiAmount}, ...]."""
+        res = await self.call("getTokenLargestAccounts", [mint, {"commitment": "confirmed"}])
+        return (res or {}).get("value", [])
+
     async def get_balance(self, address: str) -> int:
         res = await self.call("getBalance", [address, {"commitment": "confirmed"}])
         return int(res["value"])

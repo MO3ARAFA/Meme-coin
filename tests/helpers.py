@@ -43,7 +43,7 @@ def make_tx(sig, keys, pre, post, pre_tok, post_tok, *, fee=5_000, err=None, blo
 
 
 def whale_buy_tx(sig, *, sol_spent, tokens, before=0, block_time=1_700_000_000, mint=MEME, wallet=WHALE, tip=0,
-                 program=TOKEN_2022_PROGRAM):
+                 program=TOKEN_2022_PROGRAM, slot=1, bundled_to=()):
     """Whale (fee payer) buys `tokens` raw for `sol_spent` lamports, creating its ATA if needed."""
     fee = 5_000
     rent = RENT if before == 0 else 0
@@ -52,7 +52,12 @@ def whale_buy_tx(sig, *, sol_spent, tokens, before=0, block_time=1_700_000_000, 
     post = [100 * SOL - sol_spent - fee - rent - tip, RENT, 500 * SOL + sol_spent, 10 * SOL + tip]
     pre_tok = [tok(1, mint, wallet, before, program=program)] if before else []
     post_tok = [tok(1, mint, wallet, before + tokens, program=program)]
-    return make_tx(sig, keys, pre, post, pre_tok, post_tok, fee=fee, block_time=block_time)
+    for i, other in enumerate(bundled_to):  # same tx delivers tokens to other wallets (bundler)
+        keys.append(f"{other[:20]}Ata{mint[:19]}")
+        pre.append(0)
+        post.append(RENT)
+        post_tok.append(tok(len(keys) - 1, mint, other, tokens, program=program))
+    return make_tx(sig, keys, pre, post, pre_tok, post_tok, fee=fee, block_time=block_time, slot=slot)
 
 
 def whale_sell_tx(sig, *, sol_received, tokens, before, block_time=1_700_000_100, mint=MEME, wallet=WHALE,

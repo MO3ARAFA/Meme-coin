@@ -218,6 +218,21 @@ the fresh quote, a slow gate makes the bot *skip*, never *overpay*.
   are 1–14 days old with ≥ $40k liquidity and ≥ $100k volume (GeckoTerminal + DexScreener).
   About 50 requires an age window of ~120 days (`HARVEST__MAX_AGE_DAYS`).
 
+## C3. The adversarial intelligence upgrade: what was adopted, and what was changed
+
+| Proposal | Decision | Why |
+|---|---|---|
+| Moonbag runner (no timers after the scale-out) | Adopted | A 4 h cap cut 6–17 h multi-baggers. The replay models scale-out + moonbag exactly. |
+| Convex imitation penalty | Adopted as specified | Size-aware; the old flat 2.5% over-penalized small whales and under-penalized big ones. |
+| Holder concentration in the gate | Adopted, **calibrated** | "≥ 3 identical bags" flagged 3 normal tokens out of 45. Raised to ≥ 4, which still catches an 18-wallet bundler split. |
+| Live 0.65 × edge check | Adopted on the **raw** edge | On the post-penalty edge (+2%) it would reject almost every trade. |
+| Instruction fingerprint sybil merge | Adopted **with co-buy timing** | Compute-budget habits are frontend defaults shared by many independent users. Similarity alone would merge innocent wallets. |
+| Co-slot cabal check | Adopted, finalists only | RPC-heavy (≈ 1 + 3 calls per sampled buy). |
+| AI judge approving borderline wallets | Changed to **veto only** | Letting an LLM approve what the numbers rejected loosens filters on a vibe. |
+| AI emergency eject | Changed: needs an on-chain flag | A model hallucination must never be able to sell. |
+| Co-buyers within ±15 min | Changed to **before** the whale only | Wallets buying right after a tracked whale are mostly copy-bots, the exact thing we avoid. |
+| Creator/deployer activity in the overwatch | Not implemented | Finding a token's deployer costs a full signature-history scan per token. Holders, liquidity and order flow are checked instead. |
+
 ## D. What remains unsolved (be honest with yourself)
 
 - **Structural latency.** You are always 1–3 slots behind the whale. The edge must survive

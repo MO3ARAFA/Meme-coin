@@ -42,15 +42,15 @@ def test_hard_stop_at_minus_22():
     assert decide_exit(pos(), 0.79, time.time(), CFG).action is Action.HOLD
 
 
-def test_scale_out_then_breakeven_stop():
+def test_scale_out_then_moonbag_floor():
     p = pos(peak_ratio=1.46)
     d = decide_exit(p, 1.46, time.time(), CFG)
     assert (d.action, d.fraction) == (Action.SELL, 0.5)
     apply_partial_exit(p, CFG)
-    assert p.scaled_out and p.stop_ratio == pytest.approx(1.02)
+    assert p.scaled_out and p.stop_ratio == pytest.approx(1.15)
     # remainder: no second scale-out, but falling back to +2% closes it
     assert decide_exit(p, 1.40, time.time(), CFG).action is Action.HOLD
-    assert "break-even" in decide_exit(p, 1.02, time.time(), CFG).reason
+    assert "moonbag floor" in decide_exit(p, 1.15, time.time(), CFG).reason
 
 
 def test_trailing_stop_only_after_25pct_activation():
@@ -155,3 +155,33 @@ def test_live_gate_rejects_many_small_wins_with_big_losses():
 def test_live_gate_accepts_a_real_edge():
     rep = build_report(_rows([0.30, -0.12, 0.08, 0.20, -0.10] * 12), 1.0, LiveGateConfig())
     assert rep.live_ready, rep.gate_failures
+
+
+def test_moonbag_runner_is_never_cut_by_timers():
+    """The 15x held 17 h in a real whale's history: after de-risking, no clock closes the runner."""
+    day_old = time.time() - 17 * 3600
+    unscaled = pos(opened_at=day_old, peak_ratio=1.30)
+    assert "max hold" in decide_exit(unscaled, 1.30, time.time(), CFG).reason
+    runner = pos(opened_at=day_old, peak_ratio=12.0, scaled_out=True, stop_ratio=1.15)
+    assert decide_exit(runner, 11.0, time.time(), CFG).action is Action.HOLD  # 8% off peak, 17 h old
+    assert "25%" in decide_exit(runner, 8.9, time.time(), CFG).reason  # 25.8% off peak
+    assert decide_exit(pos(opened_at=day_old, scaled_out=True, stop_ratio=1.15, peak_ratio=1.2), None,
+                       time.time(), CFG).action is Action.HOLD  # no price + no timer = hold
+
+
+def test_overwatch_eject_sells_everything():
+    p = pos(eject_reason="top holder dumped 40% of supply")
+    d = decide_exit(p, 1.10, time.time(), CFG)
+    assert (d.action, d.fraction) == (Action.SELL, 1.0) and "EJECT" in d.reason
+
+
+def test_moonbags_do_not_block_new_entries():
+    state = BotState()
+    rm = RiskManager(RiskConfig(), state)
+    for i in range(3):
+        state.positions[str(i)] = pos(cost_basis_lamports=5 * 10**7, scaled_out=True, stop_ratio=1.15)
+    assert rm.size_position(LAMPORTS_PER_SOL).allowed  # three de-risked runners: still room
+    state.positions["x"] = pos()
+    state.positions["y"] = pos()
+    state.positions["z"] = pos()
+    assert not rm.size_position(LAMPORTS_PER_SOL).allowed  # three unscaled positions: full
