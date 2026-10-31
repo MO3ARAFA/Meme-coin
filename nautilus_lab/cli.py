@@ -10,6 +10,7 @@ from pathlib import Path
 from copybot.config import MomentumConfig
 
 from .data import fetch_ohlcv, load_csv, save_csv, synthetic_ohlcv
+from .research_log import record_trial
 
 DATA_DIR = Path("data/lab")
 
@@ -65,27 +66,13 @@ def cmd_fetch_many(args) -> int:
     pools = list(args.pools or [])
     if args.pools_file:
         pools += [ln.split()[0] for ln in Path(args.pools_file).read_text().splitlines() if ln.strip() and not ln.startswith("#")]
-    if args.discover and (not paths.state.exists() or args.rediscover):
-        import asyncio
-
-        import httpx
-
-        from copybot.config import load_settings
-        from copybot.harvester import discover_tokens
-
-        async def go():
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                return await discover_tokens(client, load_settings())
-
-        found = asyncio.run(go())
-        pools += [t.pool for t in found[: args.discover]]
-        print(f"discovered {len(found)} liquid pools, queued {min(len(found), args.discover)}")
-    if not pools and not paths.state.exists():
+    if not pools and not args.discover and not paths.state.exists():
         raise SystemExit("give --pools ADDR..., --pools-file FILE or --discover N (a saved run resumes without any)")
     report = run_fetch_many(
         list(dict.fromkeys(pools)), paths=paths, days=args.days, first_hours=args.first_hours,
         coarse_minutes=args.coarse_minutes, max_per_min=args.max_per_min, preflight_only=args.preflight_only,
-        retry_failed=args.retry_failed,
+        retry_failed=args.retry_failed, discover=args.discover, rediscover=args.rediscover,
+        discover_filters={"min_liquidity": args.min_liquidity, "min_volume": args.min_volume},
     )
     print("\n" + report.render())
     return report.exit_code
@@ -128,8 +115,15 @@ def cmd_backtest(args) -> int:
         datasets.append((pool[:8], df))
     if not datasets:
         raise SystemExit("give --synthetic, --csv FILE... or --pool ADDRESS...")
+    holdout_note = _split_holdout(datasets, data_files, args)
     if data_files:
-        _check_manifest(data_files, args.ignore_manifest)
+        _check_manifest(data_files, args.ignore_manifest and not args.open_holdout)
+    if args.open_holdout:
+        _open_holdout(data_files)
+    trials = None
+    if not args.synthetic and not args.open_holdout:
+        trials = record_trial({"momentum": _kv(args.momentum), "exits": _kv(args.exit), "delay_bars": args.delay_bars,
+                               "leg_cost": args.leg_cost, "size_frac": args.size_frac, "volume_spike": args.volume_spike})
 
     all_trades = []
     by_token: dict[str, list] = {}
@@ -159,12 +153,81 @@ def cmd_backtest(args) -> int:
     for line in total.verdict:
         print("   ", line)
     _print_robustness(all_trades, by_token, args.capital, args.features_out)
+    _print_gates(all_trades, by_token, trials, holdout_note, args)
     if args.synthetic:
         print("\n  SYNTHETIC data: this only proves the plumbing runs. It says NOTHING about profitability.")
     elif total.trades < 30:
         print("\n  Fewer than 30 trades: too few to conclude anything. Add more tokens / longer history.")
     print("  Backtests overstate: no honeypot/rug filter, tokens picked after the fact (survivorship), fills at candle closes.")
     return 0
+
+
+def _address_of(path_or_name) -> str:
+    stem = Path(str(path_or_name)).stem
+    return stem if len(stem) >= 32 else ""
+
+
+def _split_holdout(datasets, data_files, args) -> str:
+    """Development runs never see the frozen holdout; --open-holdout sees nothing else."""
+    from .research_log import is_holdout
+
+    if args.synthetic and not data_files:
+        return ""
+    keep = [i for i, p in enumerate(data_files) if bool(_address_of(p)) and is_holdout(_address_of(p)) == args.open_holdout
+            or (not _address_of(p) and not args.open_holdout)]
+    dropped = len(data_files) - len(keep)
+    # datasets holds the synthetic entry first (if any), then one entry per data file, in order
+    offset = len(datasets) - len(data_files)
+    kept_ds = datasets[:offset] + [datasets[offset + i] for i in keep]
+    kept_files = [data_files[i] for i in keep]
+    datasets[:] = kept_ds
+    data_files[:] = kept_files
+    if args.open_holdout:
+        if not datasets:
+            raise SystemExit("no holdout pools among the given files (holdout = hash rule minus already-seen pools)")
+        return f"HOLDOUT run on {len(datasets)} pool(s)"
+    if dropped:
+        print(f"note: {dropped} frozen-holdout file(s) excluded from this development run")
+    if not datasets:
+        raise SystemExit("nothing left to run after excluding the frozen holdout")
+    return f"{dropped} holdout pool(s) untouched" if dropped else "holdout: no pools frozen among these files yet"
+
+
+def _open_holdout(data_files) -> None:
+    from . import manifest
+    from .research_log import open_holdout
+
+    try:
+        open_holdout(manifest.fingerprint(data_files))
+    except PermissionError as exc:
+        raise SystemExit(str(exc)) from exc
+    print("HOLDOUT OPENED. This is the one look. Do not tune on what you are about to see.")
+
+
+def _print_gates(trades, by_token, trials, holdout_note, args) -> None:
+    from .stats import bootstrap_pf, bootstrap_pf_by_group, concentration, deflated_sharpe, pbo_cscv  # noqa: F401
+
+    if not trades:
+        return
+    pnls = [t.pnl for t in trades]
+    rows: list[tuple[bool | None, str]] = []
+    dsr = deflated_sharpe([t.ret for t in trades], trials) if trials else None
+    rows.append((None, "DSR: n/a (synthetic or holdout run)") if dsr is None
+                else (dsr.dsr >= 0.95, dsr.line()))
+    rows.append((None, "PBO: not computed. Needs per-slice results of >= 3 configurations; run a sweep to get one."))
+    for b in (bootstrap_pf(pnls), bootstrap_pf_by_group({k: [t.pnl for t in v] for k, v in by_token.items()})):
+        if b:
+            rows.append((b.lo > 1.0, f"CI lower bound > 1.0 when resampling {b.unit}: lower bound {b.lo:.2f}"))
+    c = concentration(pnls)
+    rows.append((not c.red_flag and c.total > 0, "concentration: result does not rest on a handful of trades"))
+    rows.append((None, f"holdout: {holdout_note or 'n/a'}"))
+    print("\n  ACCEPTANCE GATES (a filter that rejects, not a verdict that approves):")
+    for ok, text in rows:
+        print(f"    {'PASS' if ok else 'n/a ' if ok is None else 'FAIL'}  {text}")
+    failed = sum(ok is False for ok, _ in rows)
+    print(f"    -> {'REJECTED: ' + str(failed) + ' gate(s) failed' if failed else 'not rejected on development data'}."
+          " Passing earns a holdout look and paper trading, nothing more.")
+    print("    Every figure above is an upper bound: no dead tokens, no rugs, picked after the fact.")
 
 
 def _print_robustness(trades, by_token, capital, features_out) -> None:
@@ -226,6 +289,9 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--pools", nargs="+")
     m.add_argument("--pools-file", help="one pool address per line (# comments allowed)")
     m.add_argument("--discover", type=int, metavar="N", help="queue the top N liquid pools (only on the first run)")
+    m.add_argument("--min-liquidity", type=float, default=40_000,
+                   help="discovery floor in USD. Lowering it admits rugs the backtest cannot see: results get MORE optimistic")
+    m.add_argument("--min-volume", type=float, default=100_000, help="discovery floor, 24h volume USD")
     m.add_argument("--rediscover", action="store_true", help="discover again even if a saved run exists")
     m.add_argument("--days", type=float, default=14.0, help="history window per pool")
     m.add_argument("--first-hours", type=float, default=24.0, help="hours of the window fetched at 1 minute (the backtest uses only these)")
@@ -244,6 +310,7 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--size-frac", type=float, default=0.05)
     b.add_argument("--leg-cost", type=float, default=0.012, help="fee+impact per leg (the bot's own replay uses 1.2%%)")
     b.add_argument("--delay-bars", type=int, default=1, help="candles from decision to order (0 = optimistic zero latency)")
+    b.add_argument("--open-holdout", action="store_true", help="run ONLY the frozen holdout pools. One time. Cannot be repeated")
     b.add_argument("--ignore-manifest", action="store_true", help="run even if a CSV no longer matches its recorded SHA-256")
     b.add_argument("--features-out", help="write one row per trade (PnL + market state at the signal) to this CSV")
     b.add_argument("--volume-spike", type=float, default=1.5, help="buy-pressure proxy; 0 disables")

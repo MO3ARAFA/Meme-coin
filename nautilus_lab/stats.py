@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from itertools import combinations
+from statistics import NormalDist
 
 import numpy as np
 
@@ -102,3 +104,69 @@ def concentration(pnls) -> Concentration:
     return Concentration(
         total, top3, top3 / total if total > 0 else None, top3 / gross if gross > 0 else None, drop, len(pnls)
     )
+
+
+# ---- multiple-testing: how much of this could be the best of N tries? --------------------------------
+EULER_GAMMA = 0.5772156649015329
+
+
+def sharpe_stats(returns) -> tuple[float, float, float, int]:
+    """(per-trade Sharpe, skewness, raw kurtosis, n). Not annualised: trades are not periodic."""
+    r = np.asarray(returns, float)
+    n = len(r)
+    if n < 3 or r.std(ddof=1) == 0:
+        return 0.0, 0.0, 3.0, n
+    mu, sd = r.mean(), r.std(ddof=1)
+    z = (r - mu) / sd
+    return float(mu / sd), float((z**3).mean()), float((z**4).mean()), n
+
+
+@dataclass(frozen=True)
+class DeflatedSharpe:
+    sharpe: float
+    sr0: float  # the Sharpe the best of `trials` zero-skill strategies would show by luck
+    dsr: float  # probability the true Sharpe exceeds that luck-adjusted bar
+    trials: int
+    n: int
+
+    def line(self, gate: float = 0.95) -> str:
+        return (f"Deflated Sharpe {self.dsr:.2f} (per-trade SR {self.sharpe:.3f} vs luck bar {self.sr0:.3f} after "
+                f"{self.trials} trials, n={self.n}) -> {'above' if self.dsr >= gate else 'BELOW'} the {gate:.2f} convention")
+
+
+def deflated_sharpe(returns, trials: int) -> DeflatedSharpe | None:
+    """Bailey & Lopez de Prado (2014). `trials` is the number of configurations tried on this data,
+    counted honestly: every threshold change, every rerun with different settings. With the trial
+    Sharpe dispersion unknown we use its null value 1/(n-1), the standard fallback."""
+    sr, skew, kurt, n = sharpe_stats(returns)
+    if n < 10:
+        return None
+    nd = NormalDist()
+    trials = max(1, int(trials))
+    sd_sr = math.sqrt(1.0 / (n - 1))
+    sr0 = 0.0 if trials == 1 else sd_sr * ((1 - EULER_GAMMA) * nd.inv_cdf(1 - 1 / trials)
+                                           + EULER_GAMMA * nd.inv_cdf(1 - 1 / (trials * math.e)))
+    denom = math.sqrt(max(1e-12, 1 - skew * sr + (kurt - 1) / 4 * sr**2))
+    return DeflatedSharpe(sr, sr0, nd.cdf((sr - sr0) * math.sqrt(n - 1) / denom), trials, n)
+
+
+def pbo_cscv(matrix, splits: int = 8) -> float | None:
+    """Probability of Backtest Overfitting by combinatorially symmetric cross-validation.
+    `matrix`: rows = time slices (e.g. days), columns = configurations tried, values = PnL of that
+    configuration in that slice. Returns the share of IS/OOS splits where the in-sample winner ranks
+    below the OOS median. Needs >= 3 configurations; returns None otherwise (do not invent one)."""
+    m = np.asarray(matrix, float)
+    if m.ndim != 2 or m.shape[1] < 3 or m.shape[0] < splits:
+        return None
+    blocks = np.array_split(np.arange(m.shape[0]), splits)
+    below = total = 0
+    for is_idx in combinations(range(splits), splits // 2):
+        oos_idx = [b for b in range(splits) if b not in is_idx]
+        is_rows = np.concatenate([blocks[b] for b in is_idx])
+        oos_rows = np.concatenate([blocks[b] for b in oos_idx])
+        best = int(np.argmax(m[is_rows].sum(axis=0)))
+        oos = m[oos_rows].sum(axis=0)
+        rank = (oos < oos[best]).sum() / (len(oos) - 1)  # 1.0 = best OOS
+        below += rank < 0.5
+        total += 1
+    return below / total

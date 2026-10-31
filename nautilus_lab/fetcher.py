@@ -314,6 +314,47 @@ def preflight(api: Gecko, candidates: list[str], paths: Paths, now: float) -> li
     raise SchemaError("pre-flight found no pool with candles: " + "; ".join(notes))
 
 
+# ---- discovery (shares the limiter and the call counter with everything else) ------------------------
+QUOTE_OK = ("So11111111111111111111111111111111111111112", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB")
+DISCOVERY_FEEDS = (("/trending_pools", {"duration": "24h"}), ("/trending_pools", {"duration": "6h"}),
+                   ("/pools", {"sort": "h24_volume_usd_desc"}))
+
+
+def discover_pools(api: Gecko, now: float, *, limit: int = 30, pages: int = 5, min_liquidity: float = 40_000,
+                   min_volume: float = 100_000, min_age_days: float = 1.0, max_age_days: float = 14.0) -> list[dict]:
+    """Liquid SOL/stable-quoted pools from GeckoTerminal's own lists. Defaults match the harvester's
+    filters on purpose: lowering the liquidity bar admits rugs the backtest cannot see, which makes every
+    later number MORE optimistic. Rate limiting is the same as for candle fetches."""
+    found: dict[str, dict] = {}
+    for path, params in DISCOVERY_FEEDS:
+        for page in range(1, pages + 1):
+            try:
+                body = api.get(path, {**params, "page": page})
+            except FetchError as exc:
+                log.warning("discovery %s %s p%d: %s", path, params, page, exc)
+                break
+            rows = body.get("data") or []
+            if not rows:
+                break
+            for r in rows:
+                a = r.get("attributes") or {}
+                quote = (((r.get("relationships") or {}).get("quote_token") or {}).get("data") or {}).get("id", "")
+                try:
+                    liq, vol = float(a.get("reserve_in_usd") or 0), float((a.get("volume_usd") or {}).get("h24") or 0)
+                    age = (now - parse_iso(a["pool_created_at"])) / 86400
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if (a.get("address") and quote.removeprefix("solana_") in QUOTE_OK and liq >= min_liquidity
+                        and vol >= min_volume and min_age_days <= age <= max_age_days):
+                    found[a["address"]] = {"address": a["address"], "name": a.get("name", ""), "liq": liq, "vol": vol,
+                                           "age_days": round(age, 1)}
+    ranked = sorted(found.values(), key=lambda d: -d["vol"])
+    log.info("discovery: %d pools pass (liq>=%.0f, vol>=%.0f, age %.0f-%.0f d); queueing %d",
+             len(ranked), min_liquidity, min_volume, min_age_days, max_age_days, min(limit, len(ranked)))
+    return ranked[:limit]
+
+
 # ---- one pool --------------------------------------------------------------------------------
 def plan_pool(
     p: dict,
@@ -525,6 +566,9 @@ def run_fetch_many(
     max_per_min: int = 28,
     preflight_only: bool = False,
     retry_failed: bool = False,
+    discover: int = 0,
+    rediscover: bool = False,
+    discover_filters: dict | None = None,
     client: httpx.Client | None = None,
     clock=time.monotonic,
     sleep=time.sleep,
@@ -544,11 +588,14 @@ def run_fetch_many(
     api = Gecko(client, SlidingWindowLimiter(max_per_min, 60.0, clock, sleep), sleep)
     report = Report()
     save = lambda: save_state(paths, st)  # noqa: E731
+    todo: list[str] = []
     try:
-        todo = [
-            a for a, p in st["pools"].items() if p["status"] in {"pending", "partial"}
-        ]
         try:
+            if discover and (rediscover or not st["pools"]):
+                for d in discover_pools(api, now_fn(), limit=discover, **(discover_filters or {})):
+                    st["pools"].setdefault(d["address"], new_pool(d["address"], d["name"]))
+                save()
+            todo = [a for a, p in st["pools"].items() if p["status"] in {"pending", "partial"}]
             if not st["preflight_ok"] and todo:
                 for line in preflight(api, todo, paths, now_fn()):
                     log.info("pre-flight %s", line)

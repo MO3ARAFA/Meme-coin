@@ -50,3 +50,34 @@ def test_concentration_counts_trades_that_must_go():
 def test_resamples_without_a_losing_trade_do_not_poison_the_interval():
     b = bootstrap_pf([5, 6, 7, -1])  # many resamples have no loss at all -> PF = inf
     assert not math.isnan(b.lo) and not math.isnan(b.hi) and b.lo > 0
+
+
+# ---- deflated Sharpe / PBO ---------------------------------------------------------------------------
+def test_deflated_sharpe_separates_edge_from_noise_and_penalises_more_trials():
+    import numpy as np
+
+    from nautilus_lab.stats import deflated_sharpe
+
+    rng = np.random.default_rng(3)
+    edge, noise = rng.normal(0.05, 0.1, 200), rng.normal(0.0, 0.1, 200)
+    assert deflated_sharpe(edge, 1).dsr > 0.95
+    assert deflated_sharpe(noise, 1).dsr < 0.95  # a lucky-looking +0.02 Sharpe is not significant
+    assert deflated_sharpe(noise, 20).dsr < 0.25  # ...and it collapses once 20 tries are admitted
+    marginal = rng.normal(0.012, 0.1, 150)
+    d1, d50, d500 = (deflated_sharpe(marginal, t) for t in (1, 50, 500))
+    assert d1.dsr > d50.dsr > d500.dsr and d1.sr0 < d50.sr0 < d500.sr0  # luck bar rises with trials
+    assert deflated_sharpe(edge[:9], 1) is None  # too few trades to say anything
+
+
+def test_pbo_is_none_without_enough_configurations_and_low_for_a_real_winner():
+    import numpy as np
+
+    from nautilus_lab.stats import pbo_cscv
+
+    rng = np.random.default_rng(5)
+    noise = rng.normal(0, 1, (48, 10))
+    assert pbo_cscv(noise[:, :2]) is None  # < 3 configurations: refuse to invent a number
+    assert 0.2 < pbo_cscv(noise) < 0.8  # all configurations equal: the IS winner is a coin flip OOS
+    real = noise.copy()
+    real[:, 0] += 1.5  # one configuration is genuinely better in every slice
+    assert pbo_cscv(real) < 0.05

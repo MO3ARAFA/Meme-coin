@@ -29,6 +29,7 @@ class FakeGecko:
         self.limit_after: int | None = None  # every call after this many returns 429
         self.limit_n: int = 0  # ...or: exactly this many 429s, then healthy
         self.interrupt_at: int | None = None
+        self.listing: list[dict] = []
 
     def add(self, addr, age_s, kind="ok"):
         self.pools[addr] = {"created": NOW - age_s, "kind": kind}
@@ -43,6 +44,9 @@ class FakeGecko:
         if (self.limit_after is not None and n > self.limit_after) or self.limit_n > 0:
             self.limit_n = max(0, self.limit_n - 1)
             return httpx.Response(429, json={"status": {"error_code": 429}})
+        if path in ("/trending_pools", "/pools"):
+            rows = self.listing if params.get("page") == "1" else []
+            return httpx.Response(200, json={"data": rows})
         addr = path.split("/")[2]
         pool = self.pools.get(addr)
         if pool is None:
@@ -227,3 +231,27 @@ def test_backtest_refuses_a_csv_that_no_longer_matches_its_hash(tmp_path, monkey
     with pytest.raises(SystemExit, match="differs from data/manifest.json"):
         cli._check_manifest([f], ignore=False)
     cli._check_manifest([f], ignore=True)  # explicit override
+
+
+# ---- discovery shares the limiter --------------------------------------------------------------------
+def listing_row(addr, *, liq=100_000, vol=500_000, age_days=3, quote="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"):
+    return {"attributes": {"address": addr, "name": f"{addr[:3]} / USDC", "reserve_in_usd": str(liq),
+                           "volume_usd": {"h24": str(vol)}, "pool_created_at": iso(NOW - age_days * 86400)},
+            "relationships": {"quote_token": {"data": {"id": f"solana_{quote}"}}}}
+
+
+def test_discovery_filters_pools_and_goes_through_the_same_pacing(tmp_path):
+    fake, paths = FakeGecko(), Paths(tmp_path / "data")
+    good = "G" * 44
+    fake.listing = [listing_row(good), listing_row("L" * 44, liq=5_000), listing_row("N" * 44, age_days=0.2),
+                    listing_row("Q" * 44, quote="SomeOtherQuoteMint1111111111111111111111111")]
+    fake.add(good, age_s=10 * 3600)
+    fake.limit_n = 1  # the first discovery call is rate limited
+    rep, clock = run(fake, paths, discover=5)
+    assert rep.exit_code == EXIT_OK and rep.total == 1 and rep.done == 1  # only the pool passing every filter
+    assert clock.slept[0] == 5.0  # discovery backed off like any other call, not a separate unpaced client
+    discovery_calls = [c for c in fake.calls if c[0] in ("/trending_pools", "/pools")]
+    assert discovery_calls and rep.calls == len(fake.calls)  # counted in the same total
+    before = len(fake.calls)
+    run(fake, paths, discover=5)  # saved run: no rediscovery
+    assert len(fake.calls) == before

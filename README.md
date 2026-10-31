@@ -1,5 +1,13 @@
 # copybot — anti-exit-liquidity Solana memecoin copy trader
 
+> **Read this first.** Nothing in this repository proves that a strategy makes money. The research lab
+> (`nautilus_lab/`) is built to **reject** bad strategies reliably and to hand the final verdict to live
+> paper trading, not to a backtest. Every backtest number here is an **upper bound, not a forecast**: the
+> data contains no dead tokens, no rugs, and the tokens were picked after the fact. Comparing against other
+> bots' published returns is out of scope: those numbers cannot be verified. The only measurable goal is:
+> *beat the previous version of this strategy on data it was not built on, and match its predicted
+> distribution in paper trading.*
+
 A self-hosted, auditable Python engine that:
 
 1. **scores** candidate wallets and keeps only *copyable* smart money, rejecting farmers,

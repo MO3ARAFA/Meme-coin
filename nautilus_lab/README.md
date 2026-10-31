@@ -81,3 +81,26 @@ python -m nautilus_lab backtest --pool $(ls data/lab/*.csv ...)    # or --csv fi
   attempt; failed pools are skipped (`--retry-failed` to try again).
 * **Provenance:** `data/manifest.json` has the SHA-256 of every CSV; `backtest` refuses a changed file
   (`--ignore-manifest` to override) and prints a data fingerprint. `data/fetch.log` has the full story.
+
+## Acceptance gates, trial counting and the frozen holdout
+
+`backtest` ends with a block that can only **reject**:
+
+| Gate | Meaning |
+|---|---|
+| Deflated Sharpe >= 0.95 | probability the true per-trade Sharpe beats what the best of N zero-skill tries would show. N = `data/trials.json`: 5 untracked manual tries plus every distinct configuration run on development data. Changing a threshold costs a trial. |
+| PBO | Probability of Backtest Overfitting (CSCV). Needs per-slice results of >= 3 configurations; printed as "not computed" until you run a sweep. It is never filled with a made-up number. |
+| CI lower bound > 1.0 | bootstrap, resampling trades and resampling tokens |
+| Concentration | the result must not vanish when the best few trades are removed |
+| Holdout | see below |
+
+Passing earns a holdout look and paper trading. It is not approval to trade money.
+
+**Holdout.** About 30% of pools, chosen by a hash of the address (not by results), are frozen in
+`data/holdout.json`. Pools that were backtested before the freeze are listed as `contaminated` and can never
+be holdout. Development runs exclude holdout pools automatically. `backtest --open-holdout` runs only them,
+ignores `--ignore-manifest`, and works **once**; a second attempt is refused. With few pools the holdout is
+a handful of tokens: it grows as new pools are fetched, and it is worth nothing statistically until it does.
+
+**Why a gate is not enough on its own:** any metric used as a gate on the same data becomes the thing being
+optimised. The only test that cannot be tuned against is data not yet seen: the holdout and live paper trading.
