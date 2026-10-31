@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 
 from .config import SafetyConfig, ShieldConfig
-from .constants import LAMPORTS_PER_SOL, NON_MEME_MINTS, USDC_MINT, WSOL_MINT
+from .constants import LAMPORTS_PER_SOL, MOMENTUM_SOURCE, NON_MEME_MINTS, USDC_MINT, WSOL_MINT
 from .dexscreener import DexScreenerClient, PairInfo, pick_best_pair
 from .jupiter import JupiterClient, NoRouteError, Quote
 from .risk_config import FeeBudget, RiskManager, per_leg_cost_from_roundtrip
@@ -175,7 +175,7 @@ class SafetyGate:
             reasons.append("already holding this token")
         if ev.block_time and now - ev.block_time > self.cfg.max_signal_age_s:
             reasons.append(f"stale signal ({now - ev.block_time:.0f}s old)")
-        if ev.is_sol_quoted and ev.quote_amount_raw < self.cfg.min_whale_buy_sol * LAMPORTS_PER_SOL:
+        if ev.wallet != MOMENTUM_SOURCE and ev.is_sol_quoted and ev.quote_amount_raw < self.cfg.min_whale_buy_sol * LAMPORTS_PER_SOL:
             reasons.append(f"whale buy too small ({ev.quote_amount_raw / LAMPORTS_PER_SOL:.3f} SOL)")
         return reasons
 

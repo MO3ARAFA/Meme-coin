@@ -20,12 +20,13 @@ from pathlib import Path
 import httpx
 
 from .config import Settings
-from .constants import BASE_FEE_LAMPORTS, LAMPORTS_PER_SOL
+from .constants import BASE_FEE_LAMPORTS, LAMPORTS_PER_SOL, MOMENTUM_SOURCE, WSOL_MINT
 from .dexscreener import DexScreenerClient
 from .executor import BalanceRef, Executor, LiveExecutor, ShadowExecutor
 from .exit_manager import ExitManager, apply_partial_exit, describe
 from .jupiter import JupiterClient, NoRouteError
 from .listener import WalletListener
+from .momentum import MomentumScanner, MomentumSignal
 from .notifier import Notifier
 from .risk_config import RiskManager
 from .ai_analyst import AIAnalyst
@@ -269,6 +270,59 @@ class CopyEngine:
             if not gate.passed:
                 return
             await self._enter(ev, sizing.lamports, gate, cluster, size_tier)
+
+    async def handle_momentum(self, sig: MomentumSignal) -> None:
+        """A breakout signal enters through the exact same gate, sizing and `_enter` as a whale buy.
+
+        The signal's own price is the anti-chase reference (the "whale price"), so if the market
+        has run more than `SAFETY__MAX_CHASE_PCT` past the breakout by the time we can fill, the
+        gate aborts. There is no whale behind the position: it is exited by stop, trail,
+        scale-out and the timers only.
+        """
+        mcfg = self.s.momentum
+        async with self._entry_lock:
+            open_momentum = [p for p in self.store.state.open_positions() if p.whale == MOMENTUM_SOURCE]
+            if len(open_momentum) >= mcfg.max_open:
+                log.info("momentum skip %s: %d momentum position(s) already open", sig.mint[:8], len(open_momentum))
+                return
+            free = await self.executor.free_balance_lamports()
+            self.risk.roll_day(self.risk.equity_lamports(free))
+            sizing = self.risk.size_position(free, mcfg.size_frac, self.cfo.state.locked_reserve_lamports)
+            if not sizing.allowed:
+                log.info("momentum skip %s: %s", sig.mint[:8], sizing.reason)
+                return
+            try:
+                info = await self.gate.mint_info(sig.mint)
+            except Exception as exc:
+                log.info("momentum skip %s: mint lookup failed: %s", sig.mint[:8], exc)
+                return
+            # lamports per raw token at signal time; SOL-quoted pairs only (enforced by the scanner)
+            ref_price = sig.price_native * LAMPORTS_PER_SOL / 10**info.decimals
+            if ref_price <= 0:
+                return
+            tokens = int(sizing.lamports / ref_price)
+            now = time.time()
+            ev = SwapEvent(
+                signature=f"momentum-{sig.mint[:8]}-{int(now)}", slot=0, block_time=int(now), wallet=MOMENTUM_SOURCE,
+                side=Side.BUY, mint=sig.mint, token_amount_raw=tokens, decimals=info.decimals, quote_mint=WSOL_MINT,
+                quote_amount_raw=sizing.lamports, token_balance_before_raw=0, token_balance_after_raw=tokens,
+                fee_lamports=0, token_program=info.program,
+            )
+            gate = await self.gate.evaluate(ev, sizing.lamports)
+            log.info("momentum gate %s", gate.summary())
+            self.evidence.record(
+                "COPY" if gate.passed else "ABORT", stage="momentum_gate", wallet=MOMENTUM_SOURCE, mint=sig.mint,
+                signature=ev.signature, window_return_pct=round(sig.window_return * 100, 2),
+                buys_m5=sig.buys_m5, buy_ratio=round(sig.buy_ratio, 3),
+                imitation_drift_pct=round(gate.chase_pct * 100, 2),
+                roundtrip_cost_pct=round((1 - gate.roundtrip_return) * 100, 2) if gate.roundtrip_return else None,
+                liquidity_usd=gate.pair.liquidity_usd if gate.pair else None,
+                net_ev_pct=round(gate.net_ev * 100, 2) if gate.net_ev is not None else None,
+                exit_liquidity_risk=gate.exit_risk, latency_ms=round(gate.latency_ms), reasons=gate.reasons,
+            )
+            if not gate.passed:
+                return
+            await self._enter(ev, sizing.lamports, gate, None, "momentum")
 
     async def _enter(self, ev: SwapEvent, lamports: int, gate: GateResult, cluster: list[str] | None = None,
                      size_tier: str = "base") -> None:
@@ -575,18 +629,30 @@ class CopyEngine:
     async def run(self) -> None:
         await self.analyst.probe()
         log.info("AI overwatch: %s", self.analyst.status)
-        self.profiles = load_approved_wallets(self.s.approved_wallets_path)
+        try:
+            self.profiles = load_approved_wallets(self.s.approved_wallets_path)
+        except FileNotFoundError:
+            if not self.s.momentum.enabled:
+                raise
+            log.warning("no approved wallets file: running the momentum source only")
+            self.profiles = {}
         self.gate.profiles = self.profiles
         self.wallets = list(self.profiles)
         free = await self.executor.free_balance_lamports()
         self.risk.roll_day(self.risk.equity_lamports(free))
         self.save()
-        listener = WalletListener(
-            self.s.ws_url, self.rpc, self.wallets, self.on_signature, self.store.state.last_signature_by_wallet,
-            mode=self.s.listener_mode, poll_interval_s=self.s.poll_interval_s,
-        )
+        sources = [f"{len(self.wallets)} wallets"] + (["momentum"] if self.s.momentum.enabled else [])
         await self.notifier.send(
-            f"copybot started in {self.s.execution_mode.value} | {len(self.wallets)} wallets | free {sol(free)} | "
+            f"copybot started in {self.s.execution_mode.value} | {' + '.join(sources)} | free {sol(free)} | "
             f"{len(self.store.state.open_positions())} open positions restored"
         )
-        await asyncio.gather(listener.run(), self.exits.run(), self.status_loop(), self.maintenance_loop())
+        tasks = [self.exits.run(), self.status_loop(), self.maintenance_loop()]
+        if self.wallets:
+            listener = WalletListener(
+                self.s.ws_url, self.rpc, self.wallets, self.on_signature, self.store.state.last_signature_by_wallet,
+                mode=self.s.listener_mode, poll_interval_s=self.s.poll_interval_s,
+            )
+            tasks.append(listener.run())
+        if self.s.momentum.enabled:
+            tasks.append(MomentumScanner(self.s, self.client, self.dex, self.handle_momentum).run())
+        await asyncio.gather(*tasks)

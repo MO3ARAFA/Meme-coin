@@ -280,6 +280,39 @@ class EvolveConfig(BaseModel):
     reload_interval_s: float = 10.0
 
 
+class MomentumConfig(BaseModel):
+    """Second signal source: breakout momentum on liquid, already-launched memecoins.
+
+    OFF by default. A signal is only a *candidate*: it still has to pass the same safety gate,
+    kill switch, fee guard, sizing, circuit breaker and exit engine as a copied whale buy. It
+    deliberately never trades the first minutes of a launch (that is sniping, not momentum).
+    """
+
+    enabled: bool = False
+    universe_refresh_s: float = 1800.0  # re-discover liquid memecoins (GeckoTerminal + DexScreener)
+    poll_interval_s: float = 20.0  # DexScreener batch poll (30 mints per request)
+    max_universe: int = 60
+    history_len: int = 90  # samples kept per token (~30 min at 20 s)
+    # Breakout definition, measured on our own samples of the pair's price:
+    window_s: float = 300.0
+    min_samples: int = 6
+    min_return: float = 0.08  # >= +8% over the window ...
+    max_return: float = 0.60  # ... but not a vertical candle (buying those is chasing the top)
+    min_up_step_frac: float = 0.55  # >= 55% of consecutive samples rose: a grind, not one spike
+    max_pullback_from_high: float = 0.03  # price within 3% of the window high (still going)
+    # Buy pressure from DexScreener's 5-minute transaction counts:
+    min_buys_m5: int = 25
+    min_buy_ratio: float = 0.60
+    # Pair quality (the safety gate re-checks liquidity/mcap with its own, stricter numbers):
+    min_liquidity_usd: float = 40_000
+    min_age_hours: float = 6.0
+    max_age_days: float = 14.0
+    # Behaviour:
+    cooldown_s: float = 6 * 3600  # per mint, after a signal fired (acted on or not)
+    size_frac: float = 0.05  # half the base copy size: this source has no track record yet
+    max_open: int = 1  # concurrent momentum positions (also bounded by RISK__MAX_OPEN_POSITIONS)
+
+
 class LiveGateConfig(BaseModel):
     """What shadow mode must prove before LIVE is allowed to start."""
 
@@ -342,6 +375,7 @@ class Settings(BaseSettings):
     radar: RadarConfig = Field(default_factory=RadarConfig)
     treasury: TreasuryConfig = Field(default_factory=TreasuryConfig)
     evolve: EvolveConfig = Field(default_factory=EvolveConfig)
+    momentum: MomentumConfig = Field(default_factory=MomentumConfig)
 
     @field_validator("listener_mode")
     @classmethod

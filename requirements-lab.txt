@@ -1,0 +1,8 @@
+# Optional research lab (nautilus_lab/). Deliberately NOT part of the hash-locked core: the bot
+# itself needs none of this, and a heavy compiled dependency does not belong in the trading path.
+# Install AFTER the core lock, into the same venv:
+#   pip install --require-hashes -r requirements.txt
+#   pip install -r requirements-lab.txt
+nautilus_trader==1.231.0
+# nautilus 1.231's BarDataWrangler raises "buffer source array is read-only" on pandas 3.
+pandas>=2.2,<3

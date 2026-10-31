@@ -41,6 +41,7 @@ seed_wallets.txt ──► wallet_scorer ──► approved_wallets.json
 | File | Role |
 |---|---|
 | `copybot/config.py` | Every threshold, typed (pydantic), overridable from `.env` |
+| `copybot/momentum.py` | Optional breakout-momentum signal source: pure detector + DexScreener scanner |
 | `copybot/harvester.py` | Cross-token mid-wave discovery (`harvest`) and co-buyer graph discovery (`--co-buyers`) |
 | `copybot/fingerprint.py` | Execution fingerprints (compute budget, program sequence, tips) and timing entropy |
 | `copybot/cabal_detector.py` | Same-tx bundles, co-slot cabals, holder concentration (pools/PDAs excluded) |
@@ -86,9 +87,55 @@ python main.py radar --expand          # social/narrative radar; queue early pro
 python main.py score --with-queue      # score seeds + radar queue
 ```
 
-Run the tests: `pip install -r requirements-dev.txt && pytest`. The suite has 101 tests,
-including a full shadow lifecycle against fake markets and a real captured mainnet v1
+Run the tests: `pip install -r requirements-dev.txt && pytest`. The suite has 131 tests (120 without the
+optional lab), including a full shadow lifecycle against fake markets and a real captured mainnet v1
 transaction.
+
+## Momentum signal source (optional, off by default)
+
+A second way to find entries, next to copy-trading: breakout momentum on liquid memecoins that are
+at least 6 hours old. It is *only a signal*: every candidate goes through the **same** safety gate,
+kill switch, fee guard, circuit breaker and exit engine as a copied whale buy, at half the base
+size (`MOMENTUM__SIZE_FRAC=0.05`) because it has no track record yet.
+
+```bash
+python main.py momentum-scan          # watch live signals, observation only, never trades (warm-up ~2 min)
+MOMENTUM__ENABLED=true python main.py run     # shadow-trade them; works without approved_wallets.json
+```
+
+| Rule | Default | Why |
+|---|---|---|
+| Return over 5 min | +8% to +60% | below = no trend; above = a vertical candle, i.e. buying the top |
+| Up-steps | >= 55% of samples rose | a grind, not one spike |
+| Distance from window high | <= 3% | still going, not fading |
+| Buys in 5 min / buy ratio | >= 25 / >= 60% | real flow behind the move |
+| Pair | SOL-quoted AMM, >= $40k liquidity, 6 h - 14 d old | never a launch: that is sniping |
+
+The signal's own price is the anti-chase reference, so if the market runs past `SAFETY__MAX_CHASE_PCT`
+(12%) before we can fill, the gate aborts. There is no whale behind these positions: they exit on
+the hard stop, trail, scale-out and timers only. Positions are tagged `MOMENTUM` in the journal, so
+`python main.py report` and `cfo` show the source's own record. **Judge it by that shadow record, not
+by a backtest.**
+
+## Research lab: backtesting on NautilusTrader (optional)
+
+`nautilus_lab/` runs the momentum strategy on historical candles with
+[NautilusTrader](https://github.com/nautechsystems/nautilus_trader). It imports the bot's own
+`detect_momentum` and `decide_exit`, so a backtest exercises the production entry and exit logic.
+It is a separate install because the core stays five hash-locked packages:
+
+```bash
+pip install --require-hashes -r requirements.txt && pip install -r requirements-lab.txt
+python -m nautilus_lab pools                     # liquid memecoin pools worth studying
+python -m nautilus_lab fetch <POOL> --days 3     # 1-minute candles (GeckoTerminal) -> data/lab/
+python -m nautilus_lab backtest --pool <POOL1> <POOL2> <POOL3>
+python -m nautilus_lab backtest --synthetic      # plumbing check on generated data (proves nothing about profit)
+```
+
+It reports win rate, profit factor, expectancy and drawdown against the same thresholds as the
+LIVE-readiness gate. Read [`nautilus_lab/README.md`](nautilus_lab/README.md) before trusting a number:
+candles have no honeypot filter, `--delay-bars 0` is zero latency (optimistic), and a handful of trades
+means nothing.
 
 ## Going LIVE (only after the shadow record earns it)
 

@@ -241,6 +241,22 @@ async def cmd_radar(s: Settings, expand: bool) -> int:
     return 0
 
 
+async def cmd_momentum_scan(s: Settings) -> int:
+    """Watch the momentum detector live and print signals. Observation only: never trades."""
+    from copybot.dexscreener import DexScreenerClient
+    from copybot.momentum import MomentumScanner
+
+    async with make_client() as client:
+        dex = DexScreenerClient(client, s.dexscreener_base_url, s.dexscreener_rps)
+
+        async def show(sig) -> None:
+            print(f"{time.strftime('%H:%M:%S')} SIGNAL {sig.mint} {sig.summary()}", flush=True)
+
+        print(f"scanning (warm-up ~{s.momentum.min_samples * s.momentum.poll_interval_s / 60:.0f} min); Ctrl-C to stop")
+        await MomentumScanner(s, client, dex, show).run()
+    return 0
+
+
 def cmd_report(s: Settings) -> int:
     rows = TradeJournal(s.trades_csv).read()
     print(format_report(build_report(rows, s.shadow_starting_sol, s.live_gate)))
@@ -269,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
         help="start LIVE even though the shadow record fails the readiness gate (not recommended)",
     )
     sub.add_parser("report")
+    sub.add_parser("momentum-scan", help="print live momentum signals (observation only, never trades)")
     sub.add_parser("cfo")
     sub.add_parser("evolve")
     rd = sub.add_parser("radar")
@@ -287,6 +304,8 @@ def main(argv: list[str] | None = None) -> int:
             return asyncio.run(cmd_check_token(s, args.mint, args.size_sol))
         if args.cmd == "run":
             return asyncio.run(cmd_run(s, args.force_live))
+        if args.cmd == "momentum-scan":
+            return asyncio.run(cmd_momentum_scan(s))
         if args.cmd == "report":
             return cmd_report(s)
         if args.cmd == "cfo":

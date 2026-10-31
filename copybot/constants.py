@@ -2,6 +2,9 @@
 
 LAMPORTS_PER_SOL = 1_000_000_000
 
+# Pseudo-"wallet" that stamps positions opened by the momentum signal source (no whale behind them).
+MOMENTUM_SOURCE = "MOMENTUM"
+
 # Mints
 WSOL_MINT = "So11111111111111111111111111111111111111112"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
