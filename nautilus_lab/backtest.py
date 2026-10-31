@@ -36,6 +36,7 @@ class Trade:
     ret: float  # net of both legs' fees, on the entry notional
     pnl: float  # USD
     exits: list[str] = field(default_factory=list)
+    features: dict = field(default_factory=dict)  # market state at the signal
 
 
 @dataclass
@@ -150,6 +151,7 @@ def run_backtest(
                     pnl / notional if notional else 0.0,
                     pnl,
                     [e["reason"] for e in log["exits"]],
+                    log.get("features", {}),
                 )
             )
         account = engine.cache.accounts()[0]

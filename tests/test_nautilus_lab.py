@@ -129,4 +129,4 @@ def test_cli_synthetic_run_prints_the_honesty_banner(capsys):
     assert cli.main(["backtest", "--synthetic"]) == 0
     out = capsys.readouterr().out
     assert "SYNTHETIC data" in out and "LIVE-readiness yardsticks" in out
-    assert "concentration check" in out and "top 3 trades" in out
+    assert "robustness" in out and "bootstrap:" in out

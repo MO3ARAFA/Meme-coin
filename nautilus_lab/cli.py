@@ -97,7 +97,7 @@ def cmd_backtest(args) -> int:
     print("  LIVE-readiness yardsticks (same as `python main.py report`):")
     for line in total.verdict:
         print("   ", line)
-    _print_concentration(all_trades, by_token, args.capital)
+    _print_robustness(all_trades, by_token, args.capital, args.features_out)
     if args.synthetic:
         print("\n  SYNTHETIC data: this only proves the plumbing runs. It says NOTHING about profitability.")
     elif total.trades < 30:
@@ -106,24 +106,51 @@ def cmd_backtest(args) -> int:
     return 0
 
 
-def _print_concentration(trades, by_token, capital) -> None:
+def _print_robustness(trades, by_token, capital, features_out) -> None:
     """Memecoin payoffs are a few huge winners among many small losers. Say how much of the result
-    rests on them, so a lucky token can't pass for an edge."""
+    rests on luck, so one lucky token can't pass for an edge."""
     from .backtest import summarize
+    from .stats import bootstrap_pf, bootstrap_pf_by_group, concentration
 
     if not trades:
         return
-    pnls = sorted((t.pnl for t in trades), reverse=True)
-    total = sum(pnls)
-    print("  concentration check:")
-    if total > 0 and len(pnls) >= 3:
-        print(f"    top 3 trades = ${sum(pnls[:3]):,.0f} of ${total:,.0f} total"
-              + (" (the rest of the trades lost money)" if sum(pnls[:3]) > total else ""))
+    pnls = [t.pnl for t in trades]
+    print("  robustness (read before the PASS/FAIL lines above):")
+    for b in (bootstrap_pf(pnls), bootstrap_pf_by_group({k: [t.pnl for t in v] for k, v in by_token.items()})):
+        if b:
+            print("    bootstrap:", b.line())
+    c = concentration(pnls)
+    if c.total > 0:
+        print(f"    top 3 trades = ${c.top3:,.0f} = {c.top3_share_of_total:.0%} of total PnL, "
+              f"{c.top3_share_of_gross_profit:.0%} of gross profit")
+        print(f"    removing the best {c.drop_to_zero} of {c.n} trades makes total PnL <= 0"
+              + ("   <-- RED FLAG: the result rests on a handful of trades" if c.red_flag else ""))
+    else:
+        print(f"    total PnL ${c.total:,.0f}: nothing to concentrate")
     if len(by_token) > 1:
         best = max(by_token, key=lambda k: sum(t.pnl for t in by_token[k]))
         rest = summarize([t for k, ts in by_token.items() if k != best for t in ts], capital)
-        print(f"    without the best token ({best}): {rest.trades} trades, profit factor {rest.profit_factor:.2f}, "
-              f"expectancy {rest.expectancy:+.2%}/trade")
+        print(f"    without the best token ({best}): {rest.trades} trades, profit factor "
+              f"{rest.profit_factor:.2f}, expectancy {rest.expectancy:+.2%}/trade")
+    _features(trades, features_out)
+
+
+def _features(trades, out) -> None:
+    import pandas as pd
+
+    rows = [{"symbol": t.symbol, "opened": t.opened, "ret": t.ret, "pnl": t.pnl, **t.features} for t in trades]
+    df = pd.DataFrame(rows)
+    if out:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(out, index=False)
+        print(f"    per-trade features -> {out}")
+    cols = [c for c in df.columns if c not in {"symbol", "opened", "ret", "pnl"} and df[c].notna().sum() >= 10]
+    if len(df) >= 20 and cols:
+        corr = df[cols + ["ret"]].corr(method="spearman")["ret"].drop("ret").sort_values(key=abs, ascending=False)
+        shown = ", ".join(f"{k} {v:+.2f}" for k, v in corr.head(4).items())
+        print(f"    feature vs return (Spearman, n={len(df)}): {shown}")
+        print(f"    (|rho| < {2 / len(df) ** 0.5:.2f} is indistinguishable from zero, and with {len(cols)} features "
+              "tried, one will look good by chance: confirm on NEW tokens before filtering on it)")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -144,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--size-frac", type=float, default=0.05)
     b.add_argument("--leg-cost", type=float, default=0.012, help="fee+impact per leg (the bot's own replay uses 1.2%%)")
     b.add_argument("--delay-bars", type=int, default=1, help="candles from decision to order (0 = optimistic zero latency)")
+    b.add_argument("--features-out", help="write one row per trade (PnL + market state at the signal) to this CSV")
     b.add_argument("--volume-spike", type=float, default=1.5, help="buy-pressure proxy; 0 disables")
     b.add_argument("--momentum", nargs="*", metavar="K=V", help="override MomentumConfig, e.g. min_return=0.1")
     b.add_argument("--exit", nargs="*", metavar="K=V", help="override ExitConfig, e.g. hard_stop_loss=0.15")

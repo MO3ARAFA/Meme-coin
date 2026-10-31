@@ -70,6 +70,7 @@ class MemeMomentumStrategy(Strategy):
         self._exit_pending = False
         self._pending_reason = ""
         self._signal = None
+        self._signal_features: dict = {}
         self.trade_log: list[dict] = []
         self.signals_seen = 0
         self.chase_aborts = 0
@@ -95,17 +96,45 @@ class MemeMomentumStrategy(Strategy):
         elif not self._entry_pending and now >= self.cooldown_until:
             self._maybe_enter(price, now)
 
+    def _volume_ratio(self) -> float | None:
+        """Recent window volume / median volume of the earlier baseline; None while warming up."""
+        n = max(1, int(self.mcfg.window_s // 60))
+        if len(self.volumes) < n + 10:
+            return None
+        vols = list(self.volumes)
+        recent = sum(vols[-n:]) / n
+        base = sorted(vols[:-n])
+        median = base[len(base) // 2]
+        return recent / median if median > 0 else None
+
     def _volume_ok(self) -> bool:
         spike = self.config.min_volume_spike
         if spike <= 0:
             return True
+        ratio = self._volume_ratio()
+        return ratio is not None and ratio >= spike
+
+    def _features(self, sig, price: float, now: float) -> dict:
+        """What the market looked like at the signal. Logged per trade so winners and losers can be
+        compared afterwards. Everything here is known at decision time (no look-ahead)."""
+        prices = [x.price_native for x in self.samples]
+        rets = [math.log(b / a) for a, b in zip(prices[-31:], prices[-30:]) if a > 0 and b > 0]
+        mean = sum(rets) / len(rets) if rets else 0.0
+        vol30 = math.sqrt(sum((r - mean) ** 2 for r in rets) / len(rets)) if rets else 0.0
+        hour_ago = prices[-61] if len(prices) >= 61 else None
         n = max(1, int(self.mcfg.window_s // 60))
-        if len(self.volumes) < n + 10:
-            return False
-        recent = sum(list(self.volumes)[-n:]) / n
-        base = sorted(list(self.volumes)[:-n])
-        median = base[len(base) // 2]
-        return median > 0 and recent >= spike * median
+        usd_vol = sum(list(self.volumes)[-n:]) * price
+        return {
+            "window_return": sig.window_return,
+            "up_step_frac": sig.up_step_frac,
+            "pullback_from_high": sig.pullback_from_high,
+            "volume_ratio": self._volume_ratio(),
+            "volatility_30m": vol30,
+            "prior_hour_return": (price / hour_ago - 1.0) if hour_ago else None,
+            "usd_volume_window": usd_vol,
+            "price_usd": price,
+            "hour_utc": int((now % 86400) // 3600),
+        }
 
     # ---- scheduling (models decision -> order latency) ---------------------------------------
     def _schedule(self, kind: str, payload: dict, price: float) -> None:
@@ -174,6 +203,7 @@ class MemeMomentumStrategy(Strategy):
             return
         self._entry_pending = True
         self._signal = verdict.signal
+        self._signal_features = self._features(verdict.signal, price, now)
         self._schedule("buy", {"qty": qty, "signal_price": price}, price)
 
     def _manage(self, price: float, now: float) -> None:
@@ -237,6 +267,7 @@ class MemeMomentumStrategy(Strategy):
                     "qty": 0,
                     "fill_usd": 0.0,
                     "exits": [],
+                    "features": dict(self._signal_features),
                 }
             )
         entry = self.trade_log[-1]

@@ -45,3 +45,18 @@ python -m nautilus_lab backtest --pool <POOL> --momentum min_return=0.05 min_buy
 ```
 Any `MomentumConfig` / `ExitConfig` field can be overridden. Tuning on the same data you evaluate on
 overfits: split your tokens or your days.
+
+## Robustness block (printed after every backtest)
+
+* **Bootstrap 95% CI on profit factor**, twice: resampling trades, and resampling whole tokens (trades in
+  one token share its regime, so the token version is the stricter one). If the interval includes 1.0, no
+  edge can be claimed regardless of the point estimate.
+* **Concentration**: share of PnL from the top 3 trades, and how many of the best trades must be removed
+  for the total to reach zero. A small number is a red flag.
+* **`--features-out file.csv`**: one row per trade with PnL and the market state at the signal
+  (window return, volume ratio, volatility, prior-hour return, ...), plus Spearman correlations against the
+  return. With few trades and many features, one will look predictive by chance. Treat a correlation as a
+  hypothesis and test it on tokens you did not look at.
+
+Order of work: widen the sample first (30+ tokens, 14-30 days, default thresholds), run the live shadow
+record in parallel, and only then consider tuning or a train/test split.
