@@ -7,6 +7,8 @@
 > bots' published returns is out of scope: those numbers cannot be verified. The only measurable goal is:
 > *beat the previous version of this strategy on data it was not built on, and match its predicted
 > distribution in paper trading.*
+>
+> How Claude may and may not be used here: [`docs/CLAUDE_DOCTRINE.md`](docs/CLAUDE_DOCTRINE.md).
 
 A self-hosted, auditable Python engine that:
 
