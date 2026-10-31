@@ -24,6 +24,16 @@ trusting it with money.
 > ⚠️ Memecoin trading usually loses money. This is software, not financial advice. Run
 > shadow mode for weeks, and never put more in the bot's wallet than you can lose entirely.
 
+> **Status of the momentum hypothesis (closed).** The breakout-momentum rules in `copybot/momentum.py`
+> were run with their default settings on 72 trades across 8 pools (about 40 token-days) and were rejected by
+> every measurable acceptance gate: Deflated Sharpe 0.23 (needs 0.95), bootstrap CI for profit factor
+> [0.51, 3.56], and the result vanishes if one trade is removed. It stays in the repo, **off by default**,
+> as a record and as a test fixture. It is not to be tuned on this data: every change must be counted in
+> `data/trials.json`, and a new idea needs new data, a new holdout and a reset trial counter.
+>
+> **Most likely failure of this project:** reviving a rejected idea under the name of "widening the sample"
+> or "trying a few other parameters" without counting the attempts.
+
 ## Architecture
 
 ```
