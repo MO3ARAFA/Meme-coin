@@ -4,6 +4,8 @@ import math
 
 import pytest
 
+pytest.importorskip("numpy")
+
 from nautilus_lab.stats import bootstrap_pf, bootstrap_pf_by_group, concentration, profit_factor
 
 

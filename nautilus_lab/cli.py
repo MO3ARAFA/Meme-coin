@@ -42,12 +42,67 @@ def cmd_pools() -> int:
     return 0 if tokens else 2
 
 
+def _register(path: Path, df) -> None:
+    from . import manifest
+
+    manifest.register(path, rows=len(df), first_ts=int(df.index[0].timestamp()), last_ts=int(df.index[-1].timestamp()),
+                      step_s=60)
+
+
 def cmd_fetch(pool: str, days: float, out: Path | None) -> int:
     df = fetch_ohlcv(pool, days)
     path = out or DATA_DIR / f"{pool}.csv"
     save_csv(df, path)
+    _register(path, df)
     print(f"{len(df)} one-minute candles ({df.index[0]} .. {df.index[-1]}) -> {path}")
     return 0
+
+
+def cmd_fetch_many(args) -> int:
+    from .fetcher import Paths, run_fetch_many
+
+    paths = Paths(Path(args.root))
+    pools = list(args.pools or [])
+    if args.pools_file:
+        pools += [ln.split()[0] for ln in Path(args.pools_file).read_text().splitlines() if ln.strip() and not ln.startswith("#")]
+    if args.discover and (not paths.state.exists() or args.rediscover):
+        import asyncio
+
+        import httpx
+
+        from copybot.config import load_settings
+        from copybot.harvester import discover_tokens
+
+        async def go():
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                return await discover_tokens(client, load_settings())
+
+        found = asyncio.run(go())
+        pools += [t.pool for t in found[: args.discover]]
+        print(f"discovered {len(found)} liquid pools, queued {min(len(found), args.discover)}")
+    if not pools and not paths.state.exists():
+        raise SystemExit("give --pools ADDR..., --pools-file FILE or --discover N (a saved run resumes without any)")
+    report = run_fetch_many(
+        list(dict.fromkeys(pools)), paths=paths, days=args.days, first_hours=args.first_hours,
+        coarse_minutes=args.coarse_minutes, max_per_min=args.max_per_min, preflight_only=args.preflight_only,
+        retry_failed=args.retry_failed,
+    )
+    print("\n" + report.render())
+    return report.exit_code
+
+
+def _check_manifest(paths: list[Path], ignore: bool) -> None:
+    from . import manifest
+
+    states = {p: manifest.verify(p) for p in paths}
+    bad = [p for p, v in states.items() if v == "mismatch"]
+    if bad and not ignore:
+        raise SystemExit("data differs from data/manifest.json (edited or truncated?): "
+                         + ", ".join(p.name for p in bad) + "  (use --ignore-manifest to run anyway)")
+    ok = sum(v == "ok" for v in states.values())
+    extra = f", {len(bad)} MISMATCHED (ignored)" if bad else ""
+    extra += f", {sum(v == 'unmanifested' for v in states.values())} not in manifest" if "unmanifested" in states.values() else ""
+    print(f"data: {len(paths)} files, {ok} verified against manifest{extra}; fingerprint {manifest.fingerprint(paths)}")
 
 
 def cmd_backtest(args) -> int:
@@ -57,18 +112,24 @@ def cmd_backtest(args) -> int:
     if unknown:
         raise SystemExit(f"unknown momentum parameter(s): {sorted(unknown)}")
     datasets: list[tuple[str, object]] = []
+    data_files: list[Path] = []
     if args.synthetic:
         datasets.append(("SYNTH", synthetic_ohlcv(args.seed)))
     for f in args.csv or []:
         datasets.append((Path(f).stem[:8], load_csv(Path(f))))
+        data_files.append(Path(f))
     for pool in args.pool or []:
         path = DATA_DIR / f"{pool}.csv"
         df = load_csv(path) if path.exists() else fetch_ohlcv(pool, args.days)
         if not path.exists():
             save_csv(df, path)
+            _register(path, df)
+        data_files.append(path)
         datasets.append((pool[:8], df))
     if not datasets:
         raise SystemExit("give --synthetic, --csv FILE... or --pool ADDRESS...")
+    if data_files:
+        _check_manifest(data_files, args.ignore_manifest)
 
     all_trades = []
     by_token: dict[str, list] = {}
@@ -161,6 +222,18 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("pool")
     f.add_argument("--days", type=float, default=3.0)
     f.add_argument("--out", type=Path)
+    m = sub.add_parser("fetch-many", help="fetch many pools: rate-limited, resumable, verified (see nautilus_lab/README.md)")
+    m.add_argument("--pools", nargs="+")
+    m.add_argument("--pools-file", help="one pool address per line (# comments allowed)")
+    m.add_argument("--discover", type=int, metavar="N", help="queue the top N liquid pools (only on the first run)")
+    m.add_argument("--rediscover", action="store_true", help="discover again even if a saved run exists")
+    m.add_argument("--days", type=float, default=14.0, help="history window per pool")
+    m.add_argument("--first-hours", type=float, default=24.0, help="hours of the window fetched at 1 minute (the backtest uses only these)")
+    m.add_argument("--coarse-minutes", type=int, default=15, help="resolution of the rest of the window")
+    m.add_argument("--max-per-min", type=int, default=28, help="API calls per minute (public tier allows 30)")
+    m.add_argument("--preflight-only", action="store_true", help="validate the endpoint on one pool x one hour, then stop")
+    m.add_argument("--retry-failed", action="store_true")
+    m.add_argument("--root", default="data", help="holds .fetch_state.json, manifest.json, fetch.log, lab/")
     b = sub.add_parser("backtest")
     b.add_argument("--synthetic", action="store_true", help="generated candles: plumbing check only")
     b.add_argument("--seed", type=int, default=7)
@@ -171,6 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--size-frac", type=float, default=0.05)
     b.add_argument("--leg-cost", type=float, default=0.012, help="fee+impact per leg (the bot's own replay uses 1.2%%)")
     b.add_argument("--delay-bars", type=int, default=1, help="candles from decision to order (0 = optimistic zero latency)")
+    b.add_argument("--ignore-manifest", action="store_true", help="run even if a CSV no longer matches its recorded SHA-256")
     b.add_argument("--features-out", help="write one row per trade (PnL + market state at the signal) to this CSV")
     b.add_argument("--volume-spike", type=float, default=1.5, help="buy-pressure proxy; 0 disables")
     b.add_argument("--momentum", nargs="*", metavar="K=V", help="override MomentumConfig, e.g. min_return=0.1")
@@ -178,6 +252,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.cmd == "pools":
         return cmd_pools()
+    if args.cmd == "fetch-many":
+        return cmd_fetch_many(args)
     if args.cmd == "fetch":
         return cmd_fetch(args.pool, args.days, args.out)
     return cmd_backtest(args)

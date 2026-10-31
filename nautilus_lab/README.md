@@ -60,3 +60,24 @@ overfits: split your tokens or your days.
 
 Order of work: widen the sample first (30+ tokens, 14-30 days, default thresholds), run the live shadow
 record in parallel, and only then consider tuning or a train/test split.
+
+## fetch-many: building a bigger sample
+
+```bash
+python -m nautilus_lab fetch-many --preflight-only --pools <POOL>   # 1 pool x 1 hour: is the endpoint still what we expect?
+python -m nautilus_lab fetch-many --discover 30                    # queue the 30 most liquid pools and fetch
+python -m nautilus_lab fetch-many                                  # same command again: resumes where it stopped
+python -m nautilus_lab backtest --pool $(ls data/lab/*.csv ...)    # or --csv files; verified against data/manifest.json
+```
+
+* **Resolution split:** the first `--first-hours` (default 24) of each pool's usable history at 1 minute,
+  the rest of `--days` (default 14) at `--coarse-minutes` (15). The backtest reads only the 1-minute file,
+  so usable sample = pools x first-hours. 30 pools x 24 h is only 30 token-days; raise `--first-hours`
+  (168 is about 12 calls/pool) if you want more minute data.
+* **Pacing:** sliding 60 s window (`--max-per-min`, default 28). A 429 anyway backs off 5/10/20/60 s; if it
+  persists the run saves state and exits **2**. Exit codes: 0 ok, 1 some pool failed / pre-flight failed,
+  2 rate limited, 130 interrupted.
+* **State:** `data/.fetch_state.json` (per pool: status, cursor, calls). Empty pools are marked after one
+  attempt; failed pools are skipped (`--retry-failed` to try again).
+* **Provenance:** `data/manifest.json` has the SHA-256 of every CSV; `backtest` refuses a changed file
+  (`--ignore-manifest` to override) and prints a data fingerprint. `data/fetch.log` has the full story.

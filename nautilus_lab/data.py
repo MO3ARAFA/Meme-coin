@@ -77,20 +77,20 @@ def fetch_ohlcv(pool: str, days: float = 3.0, *, client: httpx.Client | None = N
     return clean(df)
 
 
-def clean(df: pd.DataFrame) -> pd.DataFrame:
+def clean(df: pd.DataFrame, step: int = BAR_SECONDS) -> pd.DataFrame:
     """Drop impossible rows, enforce OHLC consistency, fill the no-trade minutes."""
     df = df[~df.index.duplicated(keep="last")].sort_index()
     df = df[(df[["open", "high", "low", "close"]] > 0).all(axis=1)]
     df = df.copy()
     df["high"] = df[["open", "high", "low", "close"]].max(axis=1)
     df["low"] = df[["open", "high", "low", "close"]].min(axis=1)
-    return fill_gaps(df)
+    return fill_gaps(df, step)
 
 
-def fill_gaps(df: pd.DataFrame) -> pd.DataFrame:
+def fill_gaps(df: pd.DataFrame, step: int = BAR_SECONDS) -> pd.DataFrame:
     if df.empty:
         return df
-    grid = pd.date_range(df.index[0], df.index[-1], freq=f"{BAR_SECONDS}s")
+    grid = pd.date_range(df.index[0], df.index[-1], freq=f"{step}s")
     out = df.reindex(grid)
     out["close"] = out["close"].ffill()
     for col in ("open", "high", "low"):

@@ -1,10 +1,10 @@
 """nautilus_lab: data hygiene, execution timing (no look-ahead / latency / anti-chase), exit parity
 with the live bot, and accounting. Skipped when nautilus_trader (an optional extra) is absent."""
 
-import numpy as np
-import pandas as pd
 import pytest
 
+np = pytest.importorskip("numpy")
+pd = pytest.importorskip("pandas")
 pytest.importorskip("nautilus_trader")
 
 from nautilus_lab import cli  # noqa: E402
