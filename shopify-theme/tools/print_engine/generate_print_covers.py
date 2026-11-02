@@ -519,15 +519,14 @@ def main():
             check=True,
             capture_output=True,
         )
-    with open(os.path.join(out_dir, "cover-specs.json"), "w") as f:
-        json.dump(
-            {
-                k: {kk: v for kk, v in i.items() if kk != "barcode"}
-                for k, i in infos.items()
-            },
-            f,
-            indent=2,
-        )
+    specs_path = os.path.join(out_dir, "cover-specs.json")
+    specs = {}
+    if os.path.exists(specs_path):  # merge, so building one book keeps the others' entries
+        with open(specs_path) as f:
+            specs = json.load(f)
+    specs.update({k: {kk: v for kk, v in i.items() if kk != "barcode"} for k, i in infos.items()})
+    with open(specs_path, "w") as f:
+        json.dump(specs, f, indent=2)
     sys.exit(1 if failed else 0)
 
 

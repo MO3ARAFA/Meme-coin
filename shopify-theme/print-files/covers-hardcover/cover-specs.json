@@ -1,4 +1,18 @@
 {
+  "letters_bundle": {
+    "key": "letters_bundle",
+    "pages": 116,
+    "spine_in": 0.5,
+    "width_in": 19.0,
+    "height_in": 12.5,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "casewrap",
+    "margin": 0.75,
+    "hinge": 0.5
+  },
   "arabic": {
     "key": "arabic",
     "pages": 60,
