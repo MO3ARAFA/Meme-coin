@@ -1,15 +1,23 @@
 {% doc %}
-  Hroofy | حروفي — Cart goal / upsell progress bar (free shipping + free mini book).
+  Hroofy | حروفي — Cart goal / upsell progress bar (free shipping + free gift).
 
-  Rendered inside snippets/cart-drawer.liquid (and optionally the cart page).
-  Thresholds are read from shop metafields so the merchant can change them in
-  Shopify admin > Settings > Custom data > Shop:
-    - hroofy.free_shipping_threshold  (number_integer, in store currency, default 750)
-    - hroofy.gift_threshold           (number_integer, in store currency, default 1500)
+  Rendered inside snippets/cart-drawer.liquid. Values come from shop metafields
+  (Shopify admin > Settings > Custom data > Shop):
+    - hroofy.free_shipping_threshold  (number_integer, store currency, default 750)
+    - hroofy.gift_threshold           (number_integer, store currency, default 1500)
+    - hroofy.gift_variant             (variant_reference) the free gift variant
 
-  The drawer is re-rendered by the theme's Section Rendering API after every
-  cart change; the <hroofy-cart-goal> element also listens to `cart:update`
-  and re-fetches /cart.js as a fallback so the bar is always correct.
+  The free gift itself is made free by the automatic "Buy X Get Y" discount
+  (Hroofy books worth >= gift threshold -> 1 gift at 100% off). Shopify does not
+  add discount gifts to the cart on its own, so this component:
+    - shows an "add my free gift" button once the threshold is reached;
+    - removes the gift automatically if the cart drops below the threshold,
+      so the customer is never charged for it by surprise.
+  The gift line is excluded from the progress total.
+
+  Cart changes are announced with Shopify standard events (`@shopify/events`
+  CartLinesUpdateEvent) including the re-rendered drawer section, so Horizon's
+  drawer and cart bubble refresh themselves.
 
   @param {string} [context] - 'drawer' or 'page' (styling hook)
 {% enddoc %}
@@ -26,6 +34,12 @@
     assign gift_threshold = shop.metafields.hroofy.gift_threshold.value
   endif
 
+  assign gift_variant = shop.metafields.hroofy.gift_variant.value
+  assign gift_variant_id = ''
+  if gift_variant != blank and gift_variant.available
+    assign gift_variant_id = gift_variant.id
+  endif
+
   assign ship_cents = ship_threshold | times: 100
   assign gift_cents = gift_threshold | times: 100
   if gift_cents <= ship_cents
@@ -33,6 +47,17 @@
   endif
 
   assign total = cart.total_price
+  assign gift_line_key = ''
+  for item in cart.items
+    if gift_variant_id != blank and item.variant_id == gift_variant_id
+      assign gift_line_key = item.key
+      assign total = total | minus: item.final_line_price
+    endif
+  endfor
+  if total < 0
+    assign total = 0
+  endif
+
   assign percent = total | times: 100 | divided_by: gift_cents
   if percent > 100
     assign percent = 100
@@ -50,11 +75,27 @@
     assign remaining = 0
   endif
 
+  assign gift_name = 'كتيب تلوين الجيب السحري'
+  if gift_variant != blank
+    assign gift_name = gift_variant.product.title | split: ' - ' | first
+  endif
+
   assign msg_shipping = 'باقي [amount] وتحصل على شحن مجاني 🚚'
-  assign msg_gift = '🎉 الشحن بقى مجاني! زوّد [amount] وخد كتاب تلوين مصغر هدية 🎁'
-  assign msg_done = '🏆 مبروك! شحن مجاني + كتاب تلوين مصغر هدية مع طلبك'
+  assign msg_gift = '🎉 الشحن بقى مجاني! زوّد [amount] وخد [gift] هدية 🎁'
+  assign msg_done = '🏆 مبروك! شحن مجاني + [gift] هدية مع طلبك'
+  assign msg_gift = msg_gift | replace: '[gift]', gift_name
+  assign msg_done = msg_done | replace: '[gift]', gift_name
 
   assign amount_html = remaining | money | prepend: '<strong>' | append: '</strong>'
+
+  assign show_gift_button = false
+  if goal_state == 'done' and gift_variant_id != blank and gift_line_key == blank
+    assign show_gift_button = true
+  endif
+  assign show_gift_status = false
+  if goal_state == 'done' and gift_line_key != blank
+    assign show_gift_status = true
+  endif
 -%}
 
 <hroofy-cart-goal
@@ -63,6 +104,8 @@
   data-gift-cents="{{ gift_cents }}"
   data-total-cents="{{ total }}"
   data-currency="{{ cart.currency.iso_code }}"
+  data-gift-variant="{{ gift_variant_id }}"
+  data-gift-line="{{ gift_line_key }}"
   data-msg-shipping="{{ msg_shipping | escape }}"
   data-msg-gift="{{ msg_gift | escape }}"
   data-msg-done="{{ msg_done | escape }}"
@@ -78,6 +121,17 @@
         {{ msg_done }}
     {%- endcase -%}
   </p>
+
+  {%- if gift_variant_id != blank -%}
+    <div class="hroofy-goal__gift" data-gift-add-wrap {% unless show_gift_button %}hidden{% endunless %}>
+      <button type="button" class="hroofy-goal__gift-button" data-gift-add>
+        🎁 أضف هديتي المجانية
+      </button>
+    </div>
+    <div class="hroofy-goal__gift" data-gift-status-wrap {% unless show_gift_status %}hidden{% endunless %}>
+      <p class="hroofy-goal__gift-status">✅ هديتك في السلة ومجانية بالكامل</p>
+    </div>
+  {%- endif -%}
 
   <div
     class="hroofy-goal__track"
@@ -258,30 +312,166 @@
       transition: none !important;
     }
   }
+
+  .hroofy-goal__gift {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 0 0 14px;
+  }
+
+  .hroofy-goal__gift[hidden] {
+    display: none;
+  }
+
+  .hroofy-goal__gift-button {
+    appearance: none;
+    border: 0;
+    cursor: pointer;
+    min-height: 44px;
+    padding: 10px 22px;
+    border-radius: 999px;
+    background: #ff6b4a;
+    color: #2b2d42;
+    font-family: var(--font-heading--family, 'Baloo Bhaijaan 2', 'Cairo', sans-serif);
+    font-weight: 800;
+    font-size: 16px;
+    box-shadow: 0 5px 0 #e2553a;
+    animation: hroofy-goal-bounce 1.6s ease-in-out infinite;
+  }
+
+  .hroofy-goal__gift-button:hover {
+    transform: translateY(-2px);
+  }
+
+  .hroofy-goal__gift-button:focus-visible {
+    outline: 3px dashed #2b2d42;
+    outline-offset: 3px;
+  }
+
+  .hroofy-goal__gift-button[aria-busy='true'] {
+    opacity: 0.6;
+    cursor: progress;
+    animation: none;
+  }
+
+  .hroofy-goal__gift-status {
+    margin: 0;
+    font-weight: 800;
+    font-size: 14px;
+    color: #2f7d3b;
+  }
 {% endstyle %}
 
-<script>
+<script type="module">
   if (!customElements.get('hroofy-cart-goal')) {
+    let events = null;
+    try {
+      events = await import('@shopify/events');
+    } catch (error) {
+      events = null;
+    }
+
+    const root = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || '/';
+    const SECTION_ID = 'cart-drawer-section';
+
     class HroofyCartGoal extends HTMLElement {
       connectedCallback() {
-        this.onCartUpdate = this.onCartUpdate.bind(this);
-        document.addEventListener('cart:update', this.onCartUpdate);
+        this.onLinesUpdate = this.onLinesUpdate.bind(this);
+        this.onAddClick = this.onAddClick.bind(this);
+        if (events && events.StandardEvents) {
+          document.addEventListener(events.StandardEvents.cartLinesUpdate, this.onLinesUpdate);
+        }
+        this.querySelector('[data-gift-add]')?.addEventListener('click', this.onAddClick);
+        this.maybeRemoveGift();
       }
 
       disconnectedCallback() {
-        document.removeEventListener('cart:update', this.onCartUpdate);
+        if (events && events.StandardEvents) {
+          document.removeEventListener(events.StandardEvents.cartLinesUpdate, this.onLinesUpdate);
+        }
       }
 
-      async onCartUpdate() {
-        try {
-          const root = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || '/';
-          const response = await fetch(`${root}cart.js`, { headers: { Accept: 'application/json' } });
-          if (!response.ok) return;
-          const cart = await response.json();
-          this.render(cart.total_price, cart.currency);
-        } catch (error) {
-          /* The drawer is also re-rendered by the theme, so a failed fetch is harmless. */
+      get giftVariantId() {
+        return Number(this.dataset.giftVariant || 0);
+      }
+
+      /* Re-sync when any other component changes the cart. */
+      onLinesUpdate(event) {
+        if (event.target === this) return;
+        event.promise
+          ?.then(({ detail }) => (detail && detail.items ? { items: detail.items } : this.fetchCart()))
+          .then((cart) => cart && this.render(cart))
+          .catch(() => {});
+      }
+
+      async fetchCart() {
+        const response = await fetch(`${root}cart.js`, { headers: { Accept: 'application/json' } });
+        if (!response.ok) return null;
+        return response.json();
+      }
+
+      /* Shared request + standard-event announcement so the drawer re-renders. */
+      async mutate(url, body, action, lines) {
+        const deferred = events ? events.CartLinesUpdateEvent.createPromise() : null;
+        if (deferred) {
+          this.dispatchEvent(
+            new events.CartLinesUpdateEvent({ action, context: 'cart', lines, promise: deferred.promise })
+          );
         }
+        try {
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ ...body, sections: SECTION_ID, sections_url: window.location.pathname }),
+          });
+          const data = await response.json();
+          if (!response.ok || data.status) throw new Error(data.description || data.message || 'Cart error');
+          const cart = await this.fetchCart();
+          if (deferred) {
+            deferred.resolve({
+              cart: events.CartLinesUpdateEvent.createCartFromAjaxResponse(cart),
+              detail: {
+                items: cart.items,
+                sections: data.sections,
+                source: 'hroofy-cart-goal',
+                sourceId: 'hroofy-cart-goal',
+                itemCount: cart.item_count,
+              },
+            });
+          } else {
+            window.location.reload();
+          }
+          this.render(cart);
+          return cart;
+        } catch (error) {
+          deferred?.reject(error);
+          return null;
+        }
+      }
+
+      async onAddClick(event) {
+        const button = event.currentTarget;
+        if (!this.giftVariantId || button.getAttribute('aria-busy') === 'true') return;
+        button.setAttribute('aria-busy', 'true');
+        await this.mutate(
+          `${root}cart/add.js`,
+          { items: [{ id: this.giftVariantId, quantity: 1 }] },
+          'add',
+          [{ merchandiseId: String(this.giftVariantId), quantity: 1 }]
+        );
+        button.removeAttribute('aria-busy');
+      }
+
+      /* Never leave a paid gift in the cart below the threshold. */
+      async maybeRemoveGift() {
+        const lineKey = this.dataset.giftLine;
+        if (!lineKey || this.dataset.state === 'done' || this.removing) return;
+        this.removing = true;
+        await this.mutate(`${root}cart/change.js`, { id: lineKey, quantity: 0 }, 'update', [{ id: lineKey, quantity: 0 }]);
+        this.removing = false;
       }
 
       format(cents, currency) {
@@ -296,7 +486,15 @@
         }
       }
 
-      render(total, currency) {
+      render(cart) {
+        const items = cart.items || [];
+        const giftLine = items.find((item) => this.giftVariantId && item.variant_id === this.giftVariantId);
+        let total = typeof cart.total_price === 'number'
+          ? cart.total_price
+          : items.reduce((sum, item) => sum + (item.final_line_price || 0), 0);
+        if (giftLine) total -= giftLine.final_line_price || 0;
+        total = Math.max(0, total);
+
         const ship = Number(this.dataset.shipCents);
         const gift = Number(this.dataset.giftCents);
         const percent = Math.min(100, Math.floor((total * 100) / gift));
@@ -312,17 +510,17 @@
 
         this.dataset.state = state;
         this.dataset.totalCents = String(total);
+        this.dataset.giftLine = giftLine ? giftLine.key : '';
 
         const template = this.dataset[`msg${state.charAt(0).toUpperCase()}${state.slice(1)}`] || '';
         const message = this.querySelector('.hroofy-goal__message');
         if (message) {
           message.textContent = '';
-          const parts = template.split('[amount]');
-          parts.forEach((part, index) => {
+          template.split('[amount]').forEach((part, index, parts) => {
             message.append(document.createTextNode(part));
             if (index < parts.length - 1) {
               const strong = document.createElement('strong');
-              strong.textContent = this.format(remaining, currency);
+              strong.textContent = this.format(remaining, cart.currency);
               message.append(strong);
             }
           });
@@ -333,6 +531,13 @@
         this.querySelector('.hroofy-goal__track')?.setAttribute('aria-valuenow', String(percent));
         this.querySelector('[data-milestone="shipping"]')?.classList.toggle('is-reached', total >= ship);
         this.querySelector('[data-milestone="gift"]')?.classList.toggle('is-reached', total >= gift);
+
+        const addWrap = this.querySelector('[data-gift-add-wrap]');
+        const statusWrap = this.querySelector('[data-gift-status-wrap]');
+        if (addWrap) addWrap.hidden = !(state === 'done' && !giftLine);
+        if (statusWrap) statusWrap.hidden = !(state === 'done' && giftLine);
+
+        this.maybeRemoveGift();
       }
     }
 
