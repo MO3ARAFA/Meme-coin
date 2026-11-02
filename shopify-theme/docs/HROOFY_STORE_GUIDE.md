@@ -80,7 +80,7 @@
 
 **التسعير:** الكتب المنفردة عليها خصم 30%، والباقات عليها خصم 40%. الأسعار بتنتهي بـ 9 (تسعير نفسي)، والكتاب المقوى بيبان "ترقية" منطقية بفرق 200 ج.م.
 
-**الـ POD:** `Vendor = Hroofy`، و`Product Type = Coloring Book / Coloring Book Bundle`، و`custom.pod_provider = Lulu Direct`، و`Tag = POD_Lulu-Direct`. Lulu Direct هو الأنسب لطباعة الكتب (Paperback وHardcover، مقاس A4، ورق 80# ≈ 120gsm). بعد تثبيت تطبيق Lulu Direct، اربط كل Variant بملف الـ PDF الداخلي والغلاف.
+**الـ POD:** `Vendor = Hroofy`، و`Product Type = Coloring Book / Coloring Book Bundle`، و`custom.pod_provider = Lulu Direct`، و`Tag = POD_Lulu-Direct`. Lulu Direct هو الأنسب لطباعة الكتب (Paperback وHardcover، مقاس US Letter 8.5 × 11 بوصة). **نوع الورق ووزنه** بتختاره في مشروع Lulu، ومالوش رقم مكتوب في المتجر عشان مانوعدش بحاجة مش متأكدين منها. بعد تثبيت تطبيق Lulu Direct، اربط كل Variant بملف الـ PDF الداخلي والغلاف.
 
 ---
 

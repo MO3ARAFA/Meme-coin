@@ -30,7 +30,7 @@
         "announcement_paper": {
           "type": "_announcement",
           "settings": {
-            "text": "🖍️ ورق سميك 120 جم لا يشف.. مصمم لإيد طفلك",
+            "text": "🖍️ ظهر كل رسمة فاضي.. عشان ألوان طفلك ماتبوظش اللي بعدها",
             "font": "var(--font-subheading--family)",
             "font_size": "0.875rem",
             "letter_spacing": "normal",
