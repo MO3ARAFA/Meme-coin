@@ -51,6 +51,7 @@ FONT_CSS = f"""
 .b {{ font-family: 'Cairo', sans-serif; font-weight: 700; }}
 .r {{ font-family: 'Cairo', sans-serif; font-weight: 500; }}
 .ar {{ font-family: 'Cairo', sans-serif; font-weight: 900; }}
+.ghost * {{ fill: none !important; stroke: #9A9A9A !important; stroke-dasharray: 1 13; stroke-width: 10 !important; }}
 """
 
 
@@ -72,12 +73,16 @@ class Geometry:
         self.page_h_in = trim_h_in + 2 * bleed_in
 
     def content_origin(self, page_no, binding):
-        """Top-left of the safe content box for a 1-based page number."""
+        """Top-left of the safe content box for a 1-based page number.
+
+        binding="symmetric" (default) splits the gutter evenly between both
+        sides (0.5 + 0.125 = 0.625 in on letter books), so the same PDF works
+        whether the printer binds on the left or on the right.
+        """
+        if binding == "symmetric":
+            return self.bleed + self.safe + self.gutter / 2, self.bleed + self.safe
         odd = page_no % 2 == 1
-        if binding == "left":
-            gutter_left = odd
-        else:  # right binding (RTL): recto pages carry the gutter on the right
-            gutter_left = not odd
+        gutter_left = odd if binding == "left" else not odd
         x = self.bleed + self.safe + (self.gutter if gutter_left else 0)
         y = self.bleed + self.safe
         return x, y
@@ -347,7 +352,7 @@ def build_arabic(binding):
         "arabic-alphabet-interior",
         "كتاب تلوين الحروف العربية",
         LETTER,
-        binding or "right",
+        binding or "symmetric",
         "ar",
     )
     cw, ch = b.g.content_w, b.g.content_h
@@ -411,7 +416,7 @@ def english_letter_page(word, drawing, cw, ch):
 
 
 def build_english(binding):
-    b = Book("english-alphabet-interior", "ABC Fun", LETTER, binding or "left", "en")
+    b = Book("english-alphabet-interior", "ABC Fun", LETTER, binding or "symmetric", "en")
     cw, ch = b.g.content_w, b.g.content_h
     b.add_with_back(ownership_page(b, cw, ch, "ABC Fun - Letters A to Z", False))
     for word, drawing in EN_LETTERS:
@@ -645,7 +650,7 @@ def build_numbers(binding):
         "numbers-math-interior",
         "كتاب الأرقام والحساب",
         LETTER,
-        binding or "right",
+        binding or "symmetric",
         "ar",
     )
     cw, ch = b.g.content_w, b.g.content_h
@@ -703,7 +708,7 @@ def build_gift(binding):
         "magic-pocket-gift-interior",
         "كتيب تلوين الجيب السحري",
         POCKET,
-        binding or "right",
+        binding or "symmetric",
         "ar",
     )
     cw, ch = b.g.content_w, b.g.content_h  # ~324 x 588
@@ -737,6 +742,10 @@ BUILDERS = {
     "gift": build_gift,
 }
 
+import books_more  # noqa: E402
+
+BUILDERS.update(books_more.build_extra(sys.modules[__name__]))
+
 
 def main():
     ap = argparse.ArgumentParser(
@@ -745,8 +754,8 @@ def main():
     ap.add_argument("books", nargs="*", help="arabic english numbers gift (default: all)")
     ap.add_argument(
         "--binding",
-        choices=["left", "right"],
-        help="override binding edge for all books",
+        choices=["symmetric", "left", "right"],
+        help="gutter placement: symmetric (default, works for any binding), left or right",
     )
     args = ap.parse_args()
     unknown = [k for k in args.books if k not in BUILDERS]
@@ -774,6 +783,10 @@ def main():
     subprocess.run(
         ["node", os.path.join(HERE, "render_pdf.mjs"), json.dumps(jobs)], check=True
     )
+    import pdf_boxes
+
+    for job in jobs:
+        pdf_boxes.normalise(job["pdf"], float(job["width"][:-2]), float(job["height"][:-2]))
 
 
 if __name__ == "__main__":

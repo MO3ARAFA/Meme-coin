@@ -27,10 +27,13 @@ PREVIEW_DIR = os.path.join(PRINT_DIR, "_preview")
 
 # slug: (trim_w_in, trim_h_in, safe_in, gutter_in, binding)
 SPEC = {
-    "arabic-alphabet-interior": (8.5, 11, 0.5, 0.25, "right"),
-    "english-alphabet-interior": (8.5, 11, 0.5, 0.25, "left"),
-    "numbers-math-interior": (8.5, 11, 0.5, 0.25, "right"),
-    "magic-pocket-gift-interior": (4.25, 6.875, 0.375, 0.125, "right"),
+    "arabic-alphabet-interior": (8.5, 11, 0.5, 0.25, "symmetric"),
+    "english-alphabet-interior": (8.5, 11, 0.5, 0.25, "symmetric"),
+    "numbers-math-interior": (8.5, 11, 0.5, 0.25, "symmetric"),
+    "animals-world-interior": (8.5, 11, 0.5, 0.25, "symmetric"),
+    "space-adventures-interior": (8.5, 11, 0.5, 0.25, "symmetric"),
+    "draw-and-complete-interior": (8.5, 11, 0.5, 0.25, "symmetric"),
+    "magic-pocket-gift-interior": (4.25, 6.875, 0.375, 0.125, "symmetric"),
 }
 BLEED = 0.125
 DPI = 48
@@ -84,11 +87,15 @@ def check(slug, spec, tmp):
         box = ImageOps.invert(im).point(lambda v: 255 if v > 25 else 0).getbbox()
         if not box:
             continue
-        odd = n % 2 == 1
-        gutter_left = odd if binding == "left" else not odd
         b = BLEED * DPI
-        left = b + safe * DPI + (gutter * DPI if gutter_left else 0)
-        right = W - b - safe * DPI - (0 if gutter_left else gutter * DPI)
+        if binding == "symmetric":
+            left = b + (safe + gutter / 2) * DPI
+            right = W - b - (safe + gutter / 2) * DPI
+        else:
+            odd = n % 2 == 1
+            gutter_left = odd if binding == "left" else not odd
+            left = b + safe * DPI + (gutter * DPI if gutter_left else 0)
+            right = W - b - safe * DPI - (0 if gutter_left else gutter * DPI)
         top, bottom = b + safe * DPI, H - b - safe * DPI
         if (
             box[0] < left - TOL_PX

@@ -1,46 +1,52 @@
-# ملفات الطباعة الداخلية: حروفي (Interior Print Files)
+# ملفات الطباعة: حروفي (Lulu Direct / Amazon KDP)
 
-ملفات PDF داخلية جاهزة لـ Lulu Direct وAmazon KDP. ولّدها `tools/print_engine/generate_print_pdfs.py`.
+ملفات Vector PDF جاهزة للطباعة: 7 كتب، وكل كتاب ليه ملف داخلي وملف غلاف ملفوف (Wraparound). مولّدة بالكامل بالكود من `tools/print_engine/`.
 
-| الملف | الصفحات | المقاس النهائي (Trim) | مقاس الملف (مع Bleed) | الكعب |
-|---|---|---|---|---|
-| `arabic-alphabet-interior.pdf` | 60 | 8.5 × 11 in | 8.75 × 11.25 in | يمين (RTL) |
-| `english-alphabet-interior.pdf` | 56 | 8.5 × 11 in | 8.75 × 11.25 in | شمال (LTR) |
-| `numbers-math-interior.pdf` | 56 | 8.5 × 11 in | 8.75 × 11.25 in | يمين (RTL) |
-| `magic-pocket-gift-interior.pdf` | 12 | 4.25 × 6.875 in (Pocket Book) | 4.5 × 7.125 in | يمين (RTL) |
+| الكتاب | الملف الداخلي | ملف الغلاف | الصفحات | المقاس (بوصة) | التجليد | الكعب | الغلاف بالكامل |
+|---|---|---|---|---|---|---|---|
+| الحروف العربية | `arabic-alphabet-interior.pdf` | `covers/arabic-alphabet-cover.pdf` | 60 | 8.5 × 11 | Perfect Bound | 0.1951" | 17.4451 × 11.2500" |
+| ABC Fun | `english-alphabet-interior.pdf` | `covers/english-alphabet-cover.pdf` | 56 | 8.5 × 11 | Perfect Bound | 0.1861" | 17.4361 × 11.2500" |
+| الأرقام والحساب | `numbers-math-interior.pdf` | `covers/numbers-math-cover.pdf` | 56 | 8.5 × 11 | Perfect Bound | 0.1861" | 17.4361 × 11.2500" |
+| عالم الحيوانات | `animals-world-interior.pdf` | `covers/animals-world-cover.pdf` | 52 | 8.5 × 11 | Perfect Bound | 0.1771" | 17.4271 × 11.2500" |
+| الفضاء والمغامرات | `space-adventures-interior.pdf` | `covers/space-adventures-cover.pdf` | 48 | 8.5 × 11 | Perfect Bound | 0.1681" | 17.4181 × 11.2500" |
+| ارسم وأكمل | `draw-and-complete-interior.pdf` | `covers/draw-and-complete-cover.pdf` | 56 | 8.5 × 11 | Perfect Bound | 0.1861" | 17.4361 × 11.2500" |
+| كتيب الجيب السحري | `magic-pocket-gift-interior.pdf` | `covers/magic-pocket-gift-cover.pdf` | 12 | 4.25 × 6.875 | Saddle Stitch | 0.0000" | 8.7500 × 7.1250" |
 
-## المواصفات المطبّقة
-- **Vector PDF:** كل الرسومات والنصوص Vector، والخطوط مدمجة (Baloo Bhaijaan 2 وCairo، رخصة OFL).
-- **Bleed:** 0.125 بوصة من كل ناحية.
-- **هامش الأمان:** نص بوصة جوه حد القص من كل ناحية، وربع بوصة زيادة ناحية الكعب. الكعب بيتبدّل بين الصفحات الفردية والزوجية.
+## مواصفات الملفات الداخلية
+- **المقاس:** حد القص (Trim) زائد 0.125 بوصة Bleed من كل ناحية. الـ MediaBox مضبوط بالظبط، وفيه `TrimBox` و`BleedBox`.
+- **هوامش متماثلة:** 0.625 بوصة يمين وشمال في كتب الـ Letter، و0.4375 بوصة في كتيب الجيب، و0.5 بوصة فوق وتحت. عشان كده **نفس الملف بيشتغل لو التجليد يمين أو شمال**، ومش محتاج نسخة تانية لـ Lulu.
 - **قاعدة الوجه الواحد:** كل صفحة رسم ظهرها فاضي، وعليه إطار باهت وشعار "حروفي" باهت وجملة "هذه الصفحة تُركت فارغة لحماية رسمتك التالية من تلطخ الألوان".
+- **الخطوط:** Baloo Bhaijaan 2 وCairo مدمجين (رخصة OFL، والرخصة جوه `tools/print_engine/fonts/`).
 - **عدد الصفحات:** زوجي في كل الملفات.
 
-## خطوات الرفع على Lulu
-1. Create → Print Book، واختار المقاس: **US Letter 8.5 × 11** للكتب، و**Pocket Book 4.25 × 6.875** للكتيب.
-2. Interior Color: **Standard Black & White**. الورق: **White**. وزن الورق اللي هتختاره هو اللي المفروض يتكتب في وصف المنتج على المتجر.
-3. Binding: **Paperback Perfect Bound** أو **Hardcover Casewrap**. الكتيب الصغير: **Saddle Stitch**، واتأكد إن 12 صفحة فوق الحد الأدنى بتاع Lulu.
-4. ارفع ملف الـ Interior PDF المناسب.
-5. **الغلاف:** Lulu محتاج ملف غلاف منفصل (أمامي + كعب + خلفي)، وعرض الكعب بيتحسب من عدد الصفحات ونوع الورق. نزّل قالب الغلاف من صفحة المشروع على Lulu، واستخدم تصميمات الأغلفة اللي في `product-images/`.
-6. اربط كل Variant في Shopify (Paperback / Hardcover) بالمشروع المناسب في تطبيق Lulu Direct.
+## مواصفات الأغلفة (Lulu Wraparound)
+- **الترتيب من الشمال لليمين:** Bleed | الخلفي | الكعب | الأمامي | Bleed.
+- **عرض الكعب:** `عدد الصفحات ÷ 444 + 0.06` بوصة لكتب Perfect Bound، وصفر لكتيب الـ Saddle Stitch.
+- **عرض الغلاف:** `2 × عرض القص + الكعب + 0.25`، و**الارتفاع:** `ارتفاع القص + 0.25`.
+- **الكعب من غير نص:** كل الكعوب أقل من 0.25 بوصة، فالسكريبت مابيكتبش عليها. لو الكتب كبرت، النص بيتضاف لوحده.
+- **الغلاف الخلفي:**
+  - نبذة للأهل.
+  - 3 صفحات مصغرة Vector من جوه الكتاب.
+  - شعار حروفي.
+  - مساحة بيضاء للباركود تحت على اليمين: 2 × 1.2 بوصة (في كتيب الجيب 1.6 × 1 بوصة).
+- **فحص الأمان:** السكريبت بيرندر كل غلاف مرة تانية من غير خلفيات، وبيتأكد إن كل النصوص والرسومات على الأقل 0.375 بوصة جوه حد القص ومن خطوط طي الكعب، يعني نص بوصة من حافة الـ Bleed.
 
-## ⚠️ اتجاه التجليد للكتب العربية
-الكتب العربية متولدة على إن الكعب **يمين** (الكتاب بيتفتح من اليمين). لو Lulu مابيدعمش التجليد من اليمين في المنتج اللي اخترته، اعمل نسخة كعبها شمال:
-
-```bash
-python3 tools/print_engine/generate_print_pdfs.py arabic numbers gift --binding left
-```
+## ⚠️ قبل الرفع على Lulu
+1. **راجع عرض الكعب:** Lulu بيحسب الكعب حسب نوع الورق. افتح مشروعك على Lulu وقارن مقاس الغلاف اللي بيطلبه بالجدول فوق. لو مختلف، أعد التوليد بالأرقام بتاعته:
+   ```bash
+   python3 tools/print_engine/generate_print_covers.py --pages-per-inch 444 --spine-extra 0.06
+   ```
+2. **الأغلفة Paperback بس:** الـ Hardcover (Casewrap) في Lulu ليه مقاسات لف مختلفة. الملفات دي للـ Paperback.
+3. **الكتب العربية:** هتتجلّد من الشمال في Lulu. الصفحات الداخلية مش هتتأثر بفضل الهوامش المتماثلة، وكل صفحة تلوين مستقلة بذاتها.
 
 ## إعادة التوليد والفحص
 ```bash
 python3 tools/print_engine/generate_print_pdfs.py
 ```
 ```bash
+python3 tools/print_engine/generate_print_covers.py
+```
+```bash
 python3 tools/print_engine/check_print_pdfs.py
 ```
-سكريبت الفحص بيتأكد من المقاس، وإن عدد الصفحات زوجي، وإن الخطوط مدمجة، وإن مفيش حبر بره منطقة الأمان في أي صفحة. وبيحفظ معاينة لأول وآخر صفحات كل ملف في `_preview/`.
-
-المتطلبات: Python 3.9+، وNode 18+ مع Playwright (Chromium)، وpoppler-utils، وPillow.
-
-## ما لم يُولّد بعد
-ملفات Interior لكتب **عالم الحيوانات** و**الفضاء والمغامرات** و**ارسم وأكمل** لسه ماتعملتش. مكتبة الرسومات في `tools/print_engine/drawings.py` جاهزة تتوسّع ليهم.
+المتطلبات: Python 3.9+ مع Pillow وpypdf، وNode 18+ مع Playwright (Chromium)، وpoppler-utils.

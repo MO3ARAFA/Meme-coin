@@ -1,0 +1,86 @@
+{
+  "arabic": {
+    "key": "arabic",
+    "pages": 60,
+    "spine_in": 0.1951,
+    "width_in": 17.4451,
+    "height_in": 11.25,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "perfect"
+  },
+  "english": {
+    "key": "english",
+    "pages": 56,
+    "spine_in": 0.1861,
+    "width_in": 17.4361,
+    "height_in": 11.25,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "perfect"
+  },
+  "numbers": {
+    "key": "numbers",
+    "pages": 56,
+    "spine_in": 0.1861,
+    "width_in": 17.4361,
+    "height_in": 11.25,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "perfect"
+  },
+  "animals": {
+    "key": "animals",
+    "pages": 52,
+    "spine_in": 0.1771,
+    "width_in": 17.4271,
+    "height_in": 11.25,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "perfect"
+  },
+  "space": {
+    "key": "space",
+    "pages": 48,
+    "spine_in": 0.1681,
+    "width_in": 17.4181,
+    "height_in": 11.25,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "perfect"
+  },
+  "creative": {
+    "key": "creative",
+    "pages": 56,
+    "spine_in": 0.1861,
+    "width_in": 17.4361,
+    "height_in": 11.25,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "perfect"
+  },
+  "gift": {
+    "key": "gift",
+    "pages": 12,
+    "spine_in": 0.0,
+    "width_in": 8.75,
+    "height_in": 7.125,
+    "trim": [
+      4.25,
+      6.875
+    ],
+    "bind": "saddle"
+  }
+}

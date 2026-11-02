@@ -610,3 +610,9 @@ def wrap(name, x, y, size, stroke=12):
         f'<g transform="translate({x} {y}) scale({s:.4f})" fill="#fff" stroke="#111" '
         f'stroke-width="{stroke}" stroke-linejoin="round" stroke-linecap="round">{LIBRARY[name]()}</g>'
     )
+
+
+# Extra drawings (animals, space, free-drawing frames) live in drawings_extra.py.
+from drawings_extra import EXTRA  # noqa: E402
+
+LIBRARY.update(EXTRA)
