@@ -165,7 +165,10 @@
                   "blocks": {}
                 }
               },
-              "block_order": ["text_xrnftG", "price_tVjtKg"]
+              "block_order": [
+                "text_xrnftG",
+                "price_tVjtKg"
+              ]
             },
             "divider_VJhene": {
               "type": "_divider",
@@ -287,6 +290,12 @@
                 "padding-inline-end": 0
               },
               "blocks": {}
+            },
+            "amazon_kdp_btn": {
+              "type": "amazon-kdp-button",
+              "settings": {
+                "label": "خارج مصر؟ اطلبه مباشرة من Amazon بشحن Prime سريع"
+              }
             }
           },
           "block_order": [
@@ -294,11 +303,14 @@
             "divider_VJhene",
             "variant_picker_R3rGDr",
             "buy_buttons_eYQEYi",
+            "amazon_kdp_btn",
             "text_aEtTtq"
           ]
         }
       },
-      "block_order": ["disclosures_g9mWze"],
+      "block_order": [
+        "disclosures_g9mWze"
+      ],
       "settings": {
         "content_width": "content-center-aligned",
         "desktop_media_position": "left",
@@ -455,7 +467,9 @@
           ]
         }
       },
-      "block_order": ["text_cbcgyb"],
+      "block_order": [
+        "text_cbcgyb"
+      ],
       "name": "t:names.product_recommendations",
       "settings": {
         "product": "{{ closest.product }}",
@@ -477,5 +491,9 @@
       }
     }
   },
-  "order": ["main", "hroofy_coloring_preview", "product_recommendations_qggXJq"]
+  "order": [
+    "main",
+    "hroofy_coloring_preview",
+    "product_recommendations_qggXJq"
+  ]
 }

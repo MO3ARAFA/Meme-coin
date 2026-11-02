@@ -20,6 +20,14 @@ Each cover is also rendered in an "ink only" mode (backgrounds removed) and
 rasterised to verify that no text or artwork falls closer than SAFE_IN to a
 trim edge or to the spine folds. Results print as OK / FAIL.
 
+Amazon KDP (--target kdp, files go to print-files/kdp/):
+    spine  = pages * 0.002252  (white paper; no Lulu +0.06)
+    width  = 2 * trim_w + spine + 0.25,  height = trim_h + 0.25
+    spine text only when pages >= 79; barcode keep-out 2.0 x 1.2 in bottom-right
+    of the back cover, >= 0.25 in from the trim edge and from the spine fold.
+    --hardcover with --target kdp builds the Case Laminate cover (letters bundle
+    only): wrap 0.591, spine 0.45, total hinge zone 0.8 (all adjustable).
+
 Usage:
     python3 generate_print_covers.py                    # all covers
     python3 generate_print_covers.py arabic gift        # some covers
@@ -52,6 +60,14 @@ HC_SPINE = 0.25  # casewrap spine for 24-84 pages
 HC_HINGE = 0.5  # keep content this far from the spine folds on casewrap
 HC_COVER_DIR = os.path.join(PRINT_DIR, "covers-hardcover")
 INK = "#2B2D42"
+KDP_PPI = 1 / 0.002252  # KDP paperback, white paper: spine = pages * 0.002252 in
+KDP_HC_WRAP = 0.591
+KDP_HC_SPINE = 0.45  # spine proper (text area)
+KDP_HC_ZONE = 0.8  # spine + both hinges: distance between the two boards
+KDP_SPINE_TEXT_MIN_PAGES = 79
+KDP_HC_MIN_PAGES = 75
+TARGET = "lulu"
+SPINE_TEXT_W = None  # hardcover: width available for spine text
 
 
 def load_cover_art():
@@ -214,6 +230,15 @@ FEATURES = "رسومات على وجه واحد · خطوط عريضة للإي�
 FEATURES_GIFT = "رسومات على وجه واحد · هدية من حروفي"
 
 
+def kdp_book(key):
+    """KDP variant of a BOOKS entry (the pocket gift becomes a 6 x 9 perfect-bound book)."""
+    b = dict(BOOKS[key])
+    if key == "gift":
+        b.update(trim=(6, 9), bind="perfect", subtitle="10 رسمات + شهادة", thumbs=(3, 5, 7),
+                 blurb=["كتيب تلوين صغير لطفلك", "10 رسمات وشهادة إنجاز."])
+    return b
+
+
 def pdf_pages(path):
     out = subprocess.run(
         ["pdfinfo", path], capture_output=True, text=True, check=True
@@ -275,7 +300,7 @@ def front_design(b):
 def back_design(b, book):
     cw, ch = book.g.content_w, book.g.content_h
     thumbs = ""
-    tw = 200
+    tw = min(200, 300 * cw / ch)
     th = tw * ch / cw
     for i, (pno, rot) in enumerate(zip(b["thumbs"], (-4, 0, 4))):
         kind, inner = book.pages[pno - 1]
@@ -289,7 +314,7 @@ def back_design(b, book):
     blurb = "".join(
         t(408, 260 + i * 44, ln, 26, "b") for i, ln in enumerate(b["blurb"])
     )
-    feats = FEATURES_GIFT if b["bind"] == "saddle" else FEATURES
+    feats = FEATURES_GIFT if b["slug"].startswith("magic-pocket") else FEATURES
     return (
         t(408, 120, "حروفي", 70, "h")
         + t(408, 175, "لوّن.. تعلّم.. ابدع", 30, "b", "#5B5F7A")
@@ -303,7 +328,13 @@ def back_design(b, book):
 
 
 def hardcover_spine(pages, override=None):
-    """Lulu casewrap spine: fixed 0.25 in for 24-84 pages unless overridden."""
+    """Lulu casewrap spine: fixed 0.25 in for 24-84 pages unless overridden.
+
+    KDP case laminate: returns the whole spine+hinge zone (0.8 in by default)."""
+    if TARGET == "kdp":
+        if pages < KDP_HC_MIN_PAGES:
+            raise ValueError(f"{pages} pages: KDP hardcover needs at least {KDP_HC_MIN_PAGES}")
+        return override if override is not None else KDP_HC_ZONE
     if override is not None:
         return override
     if 24 <= pages <= 84:
@@ -313,11 +344,11 @@ def hardcover_spine(pages, override=None):
 
 
 def build_cover(key, ppi, extra, ink_only=False, hardcover=False, hc_spine=None):
-    b = BOOKS[key]
+    b = kdp_book(key) if TARGET == "kdp" else BOOKS[key]
     pages = pdf_pages(os.path.join(PRINT_DIR, f"{b['slug']}.pdf"))
     tw_in, th_in = b["trim"]
     if hardcover:
-        margin = HC_WRAP
+        margin = KDP_HC_WRAP if TARGET == "kdp" else HC_WRAP
         spine_in = hardcover_spine(pages, hc_spine)
     else:
         margin = BLEED
@@ -344,10 +375,16 @@ def build_cover(key, ppi, extra, ink_only=False, hardcover=False, hc_spine=None)
         by = bl + ph - SAFE_IN * DPI - bh
 
     spine_text = ""
-    if spine_in >= 0.25 and not ink_only:
+    if TARGET == "kdp":
+        show_text = pages >= KDP_SPINE_TEXT_MIN_PAGES and not ink_only
+        text_w = (KDP_HC_SPINE if hardcover else spine_in) * DPI
+    else:
+        show_text = spine_in >= 0.25 and not ink_only
+        text_w = sp
+    if show_text:
         spine_text = (
             f'<g transform="translate({spine_x + sp / 2:.1f} {H / 2:.1f}) rotate(90)">'
-            + t(0, sp * 0.18, f"حروفي · {b['title']}", min(24, sp * 0.45), "h", "#fff")
+            + t(0, text_w * 0.18, f"حروفي · {b['title']}", min(24, text_w * 0.45), "h", "#fff")
             + "</g>"
         )
 
@@ -378,6 +415,7 @@ svg {{ display: block; }}
         bind="casewrap" if hardcover else b["bind"],
         margin=margin,
         hinge=HC_HINGE if hardcover else SAFE_IN,
+        spine_text=(pages >= KDP_SPINE_TEXT_MIN_PAGES) if TARGET == "kdp" else spine_in >= 0.25,
         barcode=(bx, by, bw, bh),
     )
     return html, info
@@ -443,11 +481,32 @@ def main():
     ap.add_argument(
         "books", nargs="*", help=f"one or more of {list(BOOKS)} (default: all)"
     )
-    ap.add_argument("--pages-per-inch", type=float, default=444.0)
-    ap.add_argument("--spine-extra", type=float, default=0.06)
+    ap.add_argument("--target", choices=["lulu", "kdp"], default="lulu")
+    ap.add_argument("--pages-per-inch", type=float, default=None)
+    ap.add_argument("--spine-extra", type=float, default=None)
     ap.add_argument("--hardcover", action="store_true", help="Lulu casewrap covers (0.75 in wrap, fixed spine) into covers-hardcover/")
     ap.add_argument("--hardcover-spine", type=float, default=None, help="casewrap spine width in inches (default: 0.25 for 24-84 pages)")
     args = ap.parse_args()
+    global TARGET, PRINT_DIR, COVER_DIR, HC_COVER_DIR, HC_WRAP, HC_HINGE
+    if args.target == "kdp":
+        TARGET = "kdp"
+        PRINT_DIR = os.path.join(G.OUT_DIR, "kdp")
+        COVER_DIR = os.path.join(PRINT_DIR, "covers")
+        HC_COVER_DIR = os.path.join(PRINT_DIR, "covers-hardcover")
+        G.LETTER = G.Geometry(8.5, 11, bleed_in=0)
+        G.BUILDERS["gift"] = G.build_gift_kdp
+        if args.pages_per_inch is None:
+            args.pages_per_inch = KDP_PPI
+        if args.spine_extra is None:
+            args.spine_extra = 0.0
+        if args.hardcover and not args.books:
+            args.books = ["letters_bundle"]  # KDP hardcover min 75 pages: only the 116-page bundle
+        if args.hardcover and any(k != "letters_bundle" for k in args.books):
+            ap.error("KDP hardcover is only offered for letters_bundle (min 75 pages)")
+    if args.pages_per_inch is None:
+        args.pages_per_inch = 444.0
+    if args.spine_extra is None:
+        args.spine_extra = 0.06
     keys = args.books or [k for k in BOOKS if not (args.hardcover and BOOKS[k]["bind"] == "saddle")]
     out_dir = HC_COVER_DIR if args.hardcover else COVER_DIR
     build_dir = os.path.join(out_dir, "_build")
@@ -457,7 +516,7 @@ def main():
     os.makedirs(build_dir, exist_ok=True)
     jobs, ink_jobs, infos = [], [], {}
     for key in list(keys):
-        if args.hardcover and BOOKS[key]["bind"] == "saddle":
+        if args.hardcover and TARGET != "kdp" and BOOKS[key]["bind"] == "saddle":
             print(f"[SKIP] {key}: saddle-stitch books have no casewrap edition")
             keys.remove(key)
             continue
@@ -494,7 +553,7 @@ def main():
 
     for job in jobs:
         pdf_boxes.normalise(job["pdf"], float(job["width"][:-2]), float(job["height"][:-2]),
-                            bleed_in=HC_WRAP if args.hardcover else BLEED)
+                            bleed_in=(KDP_HC_WRAP if TARGET == "kdp" else HC_WRAP) if args.hardcover else BLEED)
 
     failed = False
     with tempfile.TemporaryDirectory() as tmp:

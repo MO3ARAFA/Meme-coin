@@ -1,0 +1,41 @@
+{%- comment -%}
+  Hroofy: "Outside Egypt? Order from Amazon" button.
+  Reads product metafield custom.amazon_kdp_url (type: URL). Renders nothing when empty.
+{%- endcomment -%}
+{%- assign kdp_url = product.metafields.custom.amazon_kdp_url.value -%}
+{%- if kdp_url != blank -%}
+  <div class="hroofy-kdp" {{ block.shopify_attributes }}>
+    <a class="hroofy-kdp__btn" href="{{ kdp_url }}" target="_blank" rel="noopener noreferrer sponsored">
+      <span class="hroofy-kdp__icon" aria-hidden="true">🌍</span>
+      <span>{{ block.settings.label }}</span>
+    </a>
+  </div>
+  <style>
+    .hroofy-kdp { margin-block: 12px 4px; width: 100%; }
+    .hroofy-kdp__btn {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      padding: 14px 18px; border-radius: 999px; text-align: center; line-height: 1.4;
+      border: 2px solid #2B2D42; background: #fff; color: #2B2D42;
+      font-weight: 700; font-size: 0.95rem; text-decoration: none;
+      transition: background .15s ease, transform .15s ease;
+    }
+    .hroofy-kdp__btn:hover { background: #FFD23F; transform: translateY(-1px); }
+    .hroofy-kdp__btn:focus-visible { outline: 3px solid #5B8DEF; outline-offset: 3px; }
+  </style>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Amazon KDP button",
+  "tag": null,
+  "settings": [
+    {
+      "type": "text",
+      "id": "label",
+      "label": "Button text",
+      "default": "خارج مصر؟ اطلبه مباشرة من Amazon بشحن Prime سريع"
+    }
+  ],
+  "presets": [{ "name": "Amazon KDP button" }]
+}
+{% endschema %}

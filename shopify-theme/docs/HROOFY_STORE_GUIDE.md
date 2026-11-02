@@ -69,18 +69,18 @@
 ### المنتجات (كلها Draft لحد رفع الصور)
 | المنتج | Handle | Paperback | Hardcover |
 |--------|--------|-----------|-----------|
-| كتاب تلوين الحروف العربية من أ إلى ي | `arabic-alphabet-coloring-book` | 349 ~~499~~ | 549 ~~749~~ |
-| ABC Fun: الحروف الإنجليزية A-Z | `english-alphabet-coloring-book` | 349 ~~499~~ | 549 ~~749~~ |
-| كتاب الأرقام والحساب 1-20 | `numbers-math-coloring-book` | 349 ~~499~~ | 549 ~~749~~ |
-| عالم الحيوانات: 40 حيواناً | `animals-world-coloring-book` | 349 ~~499~~ | 549 ~~749~~ |
-| الفضاء والمغامرات | `space-adventures-coloring-book` | 349 ~~499~~ | 549 ~~749~~ |
-| ارسم وأكمل: الرسم الإبداعي | `draw-and-complete-creative-book` | 349 ~~499~~ | 549 ~~749~~ |
-| باقة الحروف المزدوجة (عربي + إنجليزي) | `arabic-english-letters-bundle` | 599 ~~998~~ | 899 ~~1498~~ |
-| باقة العباقرة الشاملة (6 كتب) | `genius-complete-bundle` | 1799 ~~2994~~ | 2699 ~~4494~~ |
+| كتاب تلوين الحروف العربية من أ إلى ي | `arabic-alphabet-coloring-book` | 399 ~~569~~ | — (Paperback فقط) |
+| ABC Fun: الحروف الإنجليزية A-Z | `english-alphabet-coloring-book` | 399 ~~569~~ | — (Paperback فقط) |
+| كتاب الأرقام والحساب 1-20 | `numbers-math-coloring-book` | 399 ~~569~~ | — (Paperback فقط) |
+| عالم الحيوانات: 24 حيواناً | `animals-world-coloring-book` | 399 ~~569~~ | — (Paperback فقط) |
+| الفضاء والمغامرات | `space-adventures-coloring-book` | 399 ~~569~~ | — (Paperback فقط) |
+| ارسم وأكمل: الرسم الإبداعي | `draw-and-complete-creative-book` | 399 ~~569~~ | — (Paperback فقط) |
+| باقة الحروف المزدوجة (عربي + إنجليزي) | `arabic-english-letters-bundle` | 699 ~~1165~~ | 999 ~~1665~~ |
+| باقة العباقرة الشاملة (6 كتب) | `genius-complete-bundle` | 1999 ~~3332~~ | — (Paperback فقط) |
 
 **التسعير:** الكتب المنفردة عليها خصم 30%، والباقات عليها خصم 40%. الأسعار بتنتهي بـ 9 (تسعير نفسي)، والكتاب المقوى بيبان "ترقية" منطقية بفرق 200 ج.م.
 
-**الـ POD:** `Vendor = Hroofy`، و`Product Type = Coloring Book / Coloring Book Bundle`، و`custom.pod_provider = Lulu Direct`، و`Tag = POD_Lulu-Direct`. Lulu Direct هو الأنسب لطباعة الكتب (Paperback وHardcover، مقاس US Letter 8.5 × 11 بوصة). **نوع الورق ووزنه** بتختاره في مشروع Lulu، ومالوش رقم مكتوب في المتجر عشان مانوعدش بحاجة مش متأكدين منها. بعد تثبيت تطبيق Lulu Direct، اربط كل Variant بملف الـ PDF الداخلي والغلاف.
+**الـ POD:** `Vendor = Hroofy`، و`custom.pod_provider = Amazon KDP` (الملفات في `print-files/kdp/`، والتفاصيل والتسعير في `print-files/kdp/README.md`). تنبيه: KDP لا يتكامل مع Shopify، فطلبات المتجر بتتنفذ يدوياً عبر Author Copies. ملفات Lulu القديمة لسه موجودة في `print-files/`.
 
 ---
 
@@ -189,7 +189,7 @@ Draw and complete activity page for children, black and white line art, thick ou
 2. **الصور:** ولّد الصور بالبرومبتات، وارفعها لكل منتج، وبعدين حوّل الحالة لـ Active.
 3. **الشحن المجاني:** خصم تلقائي للشحن المجاني فوق 750 ج.م (اتعمل).
 4. **هدية الكتاب المصغر (1500 ج.م):** اتعملت (انظر القسم 6).
-5. **Lulu Direct:** ثبّت التطبيق، وارفع ملفات الـ PDF، واربط كل Variant.
+5. **Amazon KDP:** ارفع ملفات `print-files/kdp/` (داخلي + غلاف) لكل كتاب، وحط رابط الكتاب في الميتافيلد `custom.amazon_kdp_url`.
 6. **راجع القالب** في Online Store ← Themes ← Hroofy Kids - Draft ← Preview، وبعدها Publish.
 7. **الخطة:** المتجر على Trial، ولازم تعمل Upgrade قبل استقبال طلبات حقيقية.
 

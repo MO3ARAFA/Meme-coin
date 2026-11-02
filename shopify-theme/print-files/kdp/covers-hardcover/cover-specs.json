@@ -1,0 +1,17 @@
+{
+  "letters_bundle": {
+    "key": "letters_bundle",
+    "pages": 116,
+    "spine_in": 0.8,
+    "width_in": 18.982,
+    "height_in": 12.182,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "casewrap",
+    "margin": 0.591,
+    "hinge": 0.5,
+    "spine_text": true
+  }
+}

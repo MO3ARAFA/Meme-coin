@@ -1,0 +1,122 @@
+{
+  "arabic": {
+    "key": "arabic",
+    "pages": 60,
+    "spine_in": 0.1351,
+    "width_in": 17.3851,
+    "height_in": 11.25,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375,
+    "spine_text": false
+  },
+  "english": {
+    "key": "english",
+    "pages": 56,
+    "spine_in": 0.1261,
+    "width_in": 17.3761,
+    "height_in": 11.25,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375,
+    "spine_text": false
+  },
+  "numbers": {
+    "key": "numbers",
+    "pages": 56,
+    "spine_in": 0.1261,
+    "width_in": 17.3761,
+    "height_in": 11.25,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375,
+    "spine_text": false
+  },
+  "animals": {
+    "key": "animals",
+    "pages": 52,
+    "spine_in": 0.1171,
+    "width_in": 17.3671,
+    "height_in": 11.25,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375,
+    "spine_text": false
+  },
+  "space": {
+    "key": "space",
+    "pages": 48,
+    "spine_in": 0.1081,
+    "width_in": 17.3581,
+    "height_in": 11.25,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375,
+    "spine_text": false
+  },
+  "creative": {
+    "key": "creative",
+    "pages": 56,
+    "spine_in": 0.1261,
+    "width_in": 17.3761,
+    "height_in": 11.25,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375,
+    "spine_text": false
+  },
+  "gift": {
+    "key": "gift",
+    "pages": 24,
+    "spine_in": 0.054,
+    "width_in": 12.304,
+    "height_in": 9.25,
+    "trim": [
+      6,
+      9
+    ],
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375,
+    "spine_text": false
+  },
+  "letters_bundle": {
+    "key": "letters_bundle",
+    "pages": 116,
+    "spine_in": 0.2612,
+    "width_in": 17.5112,
+    "height_in": 11.25,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375,
+    "spine_text": true
+  }
+}

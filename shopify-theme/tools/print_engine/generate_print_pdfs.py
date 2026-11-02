@@ -90,6 +90,8 @@ class Geometry:
 
 LETTER = Geometry(8.5, 11)
 POCKET = Geometry(4.25, 6.875, safe_in=0.375, gutter_in=0.125)
+# Amazon KDP: exact trim size, no bleed (nothing in the books touches the edge)
+KDP_GIFT = Geometry(6, 9, bleed_in=0, safe_in=0.5, gutter_in=0.25)
 
 
 # ============================================================== text helpers
@@ -703,6 +705,15 @@ GIFT_DRAWINGS = [
 ]
 
 
+KDP_GIFT_DRAWINGS = GIFT_DRAWINGS + [
+    ("قَمَر", "moon"),
+    ("شَمْس", "sun"),
+    ("بَيْت", "house"),
+    ("قِطَّة", "cat"),
+    ("تُفَّاحَة", "apple"),
+]
+
+
 def build_gift(binding):
     b = Book(
         "magic-pocket-gift-interior",
@@ -734,6 +745,41 @@ def build_gift(binding):
     return b
 
 
+def build_gift_kdp(binding):
+    """KDP version of the pocket gift booklet: 6 x 9 in, 24 pages.
+
+    ownership + 10 drawings + certificate, every sheet followed by a protected
+    blank back (12 sheets x 2 = 24 pages, KDP's minimum for paperbacks).
+    """
+    b = Book(
+        "magic-pocket-gift-interior",
+        "كتيب تلوين الجيب السحري",
+        KDP_GIFT,
+        binding or "symmetric",
+        "ar",
+    )
+    cw, ch = b.g.content_w, b.g.content_h  # 456 x 768 px
+    base_w, base_h = 696.0, 960.0
+    s = min(cw / base_w, ch / base_h)
+    dy = (ch - base_h * s) / 2
+
+    def scaled(inner):
+        return f'<g transform="translate(0 {dy:.1f}) scale({s:.4f})">{inner}</g>'
+
+    b.add_with_back(
+        scaled(ownership_page(b, base_w, base_h, "هدية من حروفي", True))
+    )
+    for word, drawing in KDP_GIFT_DRAWINGS:
+        page = (
+            D.wrap(drawing, 12, 20, cw - 24, stroke=7 * 600 / (cw - 24))
+            + text(cw / 2, cw + 90, word, 52, "h", rtl=True)
+            + text(cw / 2, cw + 150, "لوّنها بألوانك المفضلة", 22, "b", "#666", rtl=True)
+        )
+        b.add_with_back(page)
+    b.add_with_back(scaled(certificate_page(base_w, base_h, "كتيب الجيب السحري", True)))
+    return b
+
+
 # ============================================================== main
 BUILDERS = {
     "arabic": build_arabic,
@@ -757,7 +803,21 @@ def main():
         choices=["symmetric", "left", "right"],
         help="gutter placement: symmetric (default, works for any binding), left or right",
     )
+    ap.add_argument(
+        "--target",
+        choices=["lulu", "kdp"],
+        default="lulu",
+        help="kdp: exact-trim no-bleed 8.5x11 interiors + 6x9 gift into print-files/kdp/",
+    )
     args = ap.parse_args()
+    global OUT_DIR, BUILD_DIR, LETTER
+    bleed = 0.125
+    if args.target == "kdp":
+        bleed = 0.0
+        OUT_DIR = os.path.join(OUT_DIR, "kdp")
+        BUILD_DIR = os.path.join(OUT_DIR, "_build")
+        LETTER = Geometry(8.5, 11, bleed_in=0)
+        BUILDERS["gift"] = build_gift_kdp
     unknown = [k for k in args.books if k not in BUILDERS]
     if unknown:
         ap.error(f"unknown book(s): {unknown}; choose from {list(BUILDERS)}")
@@ -786,7 +846,7 @@ def main():
     import pdf_boxes
 
     for job in jobs:
-        pdf_boxes.normalise(job["pdf"], float(job["width"][:-2]), float(job["height"][:-2]))
+        pdf_boxes.normalise(job["pdf"], float(job["width"][:-2]), float(job["height"][:-2]), bleed)
 
 
 if __name__ == "__main__":

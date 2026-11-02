@@ -24,6 +24,8 @@ from pypdf import PdfReader, PdfWriter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRINT_DIR = os.path.abspath(os.path.join(HERE, "..", "..", "print-files"))
+if "--target" in sys.argv and sys.argv[sys.argv.index("--target") + 1] == "kdp":
+    PRINT_DIR = os.path.join(PRINT_DIR, "kdp")
 
 BUNDLES = {
     "letters-bundle-interior": ["arabic-alphabet-interior", "english-alphabet-interior"],
