@@ -1,0 +1,76 @@
+{% doc %}
+  Hroofy | حروفي — global brand design tokens.
+  Rendered at the end of <head> in layout/theme.liquid so it overrides the
+  theme's font variables with Arabic-friendly playful fonts:
+    - Headings: Baloo Bhaijaan 2 (rounded, playful, full Arabic + Latin)
+    - Body:     Cairo (highly legible Arabic + Latin)
+  Both are free Google Fonts. Tajawal is kept as a fallback.
+{% enddoc %}
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@500;700;800&family=Cairo:wght@400;600;700;800&display=swap"
+>
+
+<style>
+  html:root {
+    /* Brand palette */
+    --hroofy-coral: #FF6B4A;
+    --hroofy-coral-dark: #E2553A;
+    --hroofy-sun: #FFD23F;
+    --hroofy-teal: #2EC4B6;
+    --hroofy-sky: #5B8DEF;
+    --hroofy-grape: #A66CFF;
+    --hroofy-bubblegum: #FF8FB1;
+    --hroofy-mint: #7BD389;
+    --hroofy-cream: #FFFBF2;
+    --hroofy-peach: #FFE3B3;
+    --hroofy-ink: #2B2D42;
+    --hroofy-ink-soft: #5B5F7A;
+
+    /* Typography overrides (Horizon font variables) */
+    --font-body--family: 'Cairo', 'Tajawal', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-subheading--family: 'Cairo', 'Tajawal', system-ui, sans-serif;
+    --font-heading--family: 'Baloo Bhaijaan 2', 'Cairo', 'Tajawal', sans-serif;
+    --font-accent--family: 'Baloo Bhaijaan 2', 'Cairo', sans-serif;
+    --font-heading--weight: 800;
+  }
+
+  h1, h2, h3, h4,
+  .h1, .h2, .h3, .h4 {
+    font-family: var(--font-heading--family);
+  }
+
+  /* Toy-UI buttons: chunky pressable shadow */
+  .button:not(.button-secondary):not(.button-unstyled),
+  button.button,
+  .shopify-payment-button__button--unbranded {
+    box-shadow: 0 5px 0 var(--hroofy-coral-dark);
+    transition:
+      transform 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+
+  .button:not(.button-secondary):not(.button-unstyled):hover {
+    transform: translateY(-2px);
+    box-shadow: 0 7px 0 var(--hroofy-coral-dark);
+  }
+
+  .button:not(.button-secondary):not(.button-unstyled):active {
+    transform: translateY(3px);
+    box-shadow: 0 2px 0 var(--hroofy-coral-dark);
+  }
+
+  ::selection {
+    background: var(--hroofy-sun);
+    color: var(--hroofy-ink);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .button {
+      transition: none !important;
+    }
+  }
+</style>

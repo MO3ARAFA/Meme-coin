@@ -1,0 +1,365 @@
+{
+  "sections": {
+    "hroofy_hero": {
+      "type": "kids-playful-hero",
+      "blocks": {
+        "badge_paper": {
+          "type": "trust_badge",
+          "settings": {
+            "icon": "paper",
+            "text": "ورق سميك 120 جم لا يشف",
+            "color": "#2EC4B6"
+          }
+        },
+        "badge_safe": {
+          "type": "trust_badge",
+          "settings": {
+            "icon": "shield",
+            "text": "آمن ومناسب للأطفال",
+            "color": "#5B8DEF"
+          }
+        },
+        "badge_screens": {
+          "type": "trust_badge",
+          "settings": {
+            "icon": "screen-off",
+            "text": "وقت مفيد بعيداً عن الشاشات",
+            "color": "#A66CFF"
+          }
+        },
+        "badge_shipping": {
+          "type": "trust_badge",
+          "settings": {
+            "icon": "truck",
+            "text": "شحن مجاني فوق 750 ج.م",
+            "color": "#FF6B4A"
+          }
+        }
+      },
+      "block_order": [
+        "badge_paper",
+        "badge_safe",
+        "badge_screens",
+        "badge_shipping"
+      ],
+      "settings": {
+        "eyebrow": "كتب تلوين تعليمية للأطفال من 3 إلى 9 سنوات",
+        "heading": "طفلك يتعلم الحروف والأرقام وهو",
+        "heading_highlight": "بيلوّن!",
+        "subheading": "<p>كتب تلوين بورق سميك 120 جم لا يشف، رسومات بخطوط عريضة لأيدي صغيرة، ووقت ممتع بعيداً عن الشاشات.</p>",
+        "button_label": "اختار كتاب طفلك",
+        "button_link": "shopify://collections/all-coloring-books",
+        "secondary_label": "شوف باقات التوفير",
+        "secondary_link": "shopify://collections/bundles",
+        "sticker_text": "وفّر 30%",
+        "bg_color_1": "#FFE8A3",
+        "bg_color_2": "#FFC6D0",
+        "text_color": "#2B2D42",
+        "accent_color": "#2EC4B6",
+        "button_color": "#FF6B4A",
+        "button_text_color": "#2B2D42",
+        "show_floaters": true,
+        "padding_top": 72,
+        "padding_bottom": 80
+      }
+    },
+    "hroofy_navigator": {
+      "type": "age-skill-navigator",
+      "blocks": {
+        "age_3_4": {
+          "type": "card",
+          "settings": {
+            "group": "age",
+            "collection": "age-3-4",
+            "title": "3 - 4 سنوات",
+            "subtitle": "خطوط عريضة ورسومات كبيرة",
+            "emoji": "🧸",
+            "button_label": "تصفح",
+            "card_color": "#FFD23F",
+            "card_text_color": "#2B2D42"
+          }
+        },
+        "age_5_6": {
+          "type": "card",
+          "settings": {
+            "group": "age",
+            "collection": "age-5-6",
+            "title": "5 - 6 سنوات",
+            "subtitle": "تتبع الحروف والعد",
+            "emoji": "🎒",
+            "button_label": "تصفح",
+            "card_color": "#7BD389",
+            "card_text_color": "#2B2D42"
+          }
+        },
+        "age_7_plus": {
+          "type": "card",
+          "settings": {
+            "group": "age",
+            "collection": "age-7-plus",
+            "title": "7 سنوات فأكثر",
+            "subtitle": "تفاصيل وتحديات أكبر",
+            "emoji": "🚀",
+            "button_label": "تصفح",
+            "card_color": "#8FB3F5",
+            "card_text_color": "#2B2D42"
+          }
+        },
+        "skill_letters": {
+          "type": "card",
+          "settings": {
+            "group": "skill",
+            "collection": "letters-coloring-books",
+            "title": "الحروف",
+            "subtitle": "عربي وإنجليزي",
+            "emoji": "🔤",
+            "button_label": "تصفح",
+            "card_color": "#FF8FB1",
+            "card_text_color": "#2B2D42"
+          }
+        },
+        "skill_numbers": {
+          "type": "card",
+          "settings": {
+            "group": "skill",
+            "collection": "numbers-coloring-books",
+            "title": "الأرقام والحساب",
+            "subtitle": "عد وجمع وطرح",
+            "emoji": "🔢",
+            "button_label": "تصفح",
+            "card_color": "#2EC4B6",
+            "card_text_color": "#2B2D42"
+          }
+        },
+        "skill_drawing": {
+          "type": "card",
+          "settings": {
+            "group": "skill",
+            "collection": "creative-drawing-books",
+            "title": "الرسم الإبداعي",
+            "subtitle": "حيوانات وفضاء وارسم وأكمل",
+            "emoji": "🎨",
+            "button_label": "تصفح",
+            "card_color": "#C3A2FF",
+            "card_text_color": "#2B2D42"
+          }
+        }
+      },
+      "block_order": [
+        "age_3_4",
+        "age_5_6",
+        "age_7_plus",
+        "skill_letters",
+        "skill_numbers",
+        "skill_drawing"
+      ],
+      "settings": {
+        "heading": "اختار الكتاب المناسب لطفلك",
+        "subheading": "تصفح حسب عمر طفلك أو حسب المهارة اللي عايزه يتعلمها",
+        "show_tabs": true,
+        "tab_age_label": "حسب العمر 🎂",
+        "tab_skill_label": "حسب المهارة 🧠",
+        "default_tab": "age",
+        "show_count": true,
+        "count_label": "كتب",
+        "columns_desktop": 3,
+        "background_color": "#FFFBF2",
+        "text_color": "#2B2D42",
+        "tab_active_color": "#FF6B4A",
+        "padding_top": 64,
+        "padding_bottom": 64
+      }
+    },
+    "product_list_fa6P9H": {
+      "type": "product-list",
+      "blocks": {
+        "static-header": {
+          "type": "_product-list-content",
+          "name": "t:names.header",
+          "static": true,
+          "settings": {
+            "content_direction": "row",
+            "vertical_on_mobile": false,
+            "horizontal_alignment": "space-between",
+            "vertical_alignment": "flex-end",
+            "align_baseline": true,
+            "horizontal_alignment_flex_direction_column": "flex-start",
+            "vertical_alignment_flex_direction_column": "center",
+            "gap": 12,
+            "width": "fill",
+            "custom_width": 100,
+            "width_mobile": "fill",
+            "custom_width_mobile": 100,
+            "height": "fit",
+            "custom_height": 100,
+            "background_media": "none",
+            "video_position": "cover",
+            "background_image_position": "cover",
+            "border": "none",
+            "border_width": 1,
+            "border_opacity": 100,
+            "border_radius": 0,
+            "padding-block-start": 0,
+            "padding-block-end": 0,
+            "padding-inline-start": 0,
+            "padding-inline-end": 0
+          },
+          "blocks": {
+            "product_list_text_YFtzcL": {
+              "type": "_product-list-text",
+              "name": "t:names.collection_title",
+              "settings": {
+                "text": "<h3>الأكثر حباً من الأطفال ❤️</h3>",
+                "width": "fit-content",
+                "max_width": "normal",
+                "alignment": "left",
+                "type_preset": "h4",
+                "font": "var(--font-body--family)",
+                "line_height": "normal",
+                "letter_spacing": "normal",
+                "case": "none",
+                "wrap": "pretty",
+                "background": false,
+                "background_color": "#00000026",
+                "corner_radius": 0,
+                "padding-block-start": 0,
+                "padding-block-end": 0,
+                "padding-inline-start": 0,
+                "padding-inline-end": 0
+              },
+              "blocks": {}
+            },
+            "product_list_button_MWeP9V": {
+              "type": "_product-list-button",
+              "name": "t:names.product_list_button",
+              "settings": {
+                "label": "شوف كل الكتب",
+                "open_in_new_tab": false,
+                "style_class": "link",
+                "width": "fit-content",
+                "custom_width": 100,
+                "width_mobile": "fit-content",
+                "custom_width_mobile": 100
+              },
+              "blocks": {}
+            }
+          },
+          "block_order": [
+            "product_list_text_YFtzcL",
+            "product_list_button_MWeP9V"
+          ]
+        },
+        "static-product-card": {
+          "type": "_product-card",
+          "name": "t:names.product_card",
+          "static": true,
+          "settings": {
+            "product_card_gap": 4,
+            "border": "none",
+            "border_width": 1,
+            "border_opacity": 100,
+            "border_radius": 0,
+            "padding-block-start": 0,
+            "padding-block-end": 0,
+            "padding-inline-start": 0,
+            "padding-inline-end": 0
+          },
+          "blocks": {
+            "product_card_gallery_677WP3": {
+              "type": "_product-card-gallery",
+              "name": "t:names.product_card_media",
+              "settings": {
+                "image_ratio": "adapt",
+                "border": "none",
+                "border_width": 1,
+                "border_opacity": 100,
+                "border_radius": 0,
+                "padding-block-start": 0,
+                "padding-block-end": 0,
+                "padding-inline-start": 0,
+                "padding-inline-end": 0
+              },
+              "blocks": {}
+            },
+            "product_title_YXxMTj": {
+              "type": "product-title",
+              "name": "t:names.product_title",
+              "settings": {
+                "width": "100%",
+                "max_width": "normal",
+                "alignment": "left",
+                "type_preset": "rte",
+                "font": "var(--font-body--family)",
+                "font_size": "1rem",
+                "line_height": "normal",
+                "letter_spacing": "normal",
+                "case": "none",
+                "wrap": "pretty",
+                "background": false,
+                "background_color": "#00000026",
+                "corner_radius": 0,
+                "padding-block-start": 4,
+                "padding-block-end": 0,
+                "padding-inline-start": 0,
+                "padding-inline-end": 0
+              },
+              "blocks": {}
+            },
+            "price_JQzVV4": {
+              "type": "price",
+              "name": "t:names.product_price",
+              "settings": {
+                "show_sale_price_first": true,
+                "show_installments": false,
+                "show_tax_info": false,
+                "type_preset": "h6",
+                "width": "100%",
+                "alignment": "left",
+                "font": "var(--font-body--family)",
+                "font_size": "1rem",
+                "line_height": "normal",
+                "letter_spacing": "normal",
+                "case": "none",
+                "padding-block-start": 0,
+                "padding-block-end": 0,
+                "padding-inline-start": 0,
+                "padding-inline-end": 0
+              },
+              "blocks": {}
+            }
+          },
+          "block_order": [
+            "product_card_gallery_677WP3",
+            "product_title_YXxMTj",
+            "price_JQzVV4"
+          ]
+        }
+      },
+      "name": "t:names.product_list",
+      "settings": {
+        "collection": "all-coloring-books",
+        "layout_type": "grid",
+        "carousel_on_mobile": false,
+        "max_products": 8,
+        "columns": 4,
+        "mobile_columns": "2",
+        "mobile_card_size": "60cqw",
+        "columns_gap": 8,
+        "rows_gap": 24,
+        "icons_style": "arrow",
+        "icons_shape": "none",
+        "section_width": "page-width",
+        "horizontal_alignment": "flex-start",
+        "gap": 28,
+        "background_color": "{{ settings.color_palette.background }}",
+        "padding-block-start": 48,
+        "padding-block-end": 48
+      }
+    }
+  },
+  "order": [
+    "hroofy_hero",
+    "hroofy_navigator",
+    "product_list_fa6P9H"
+  ]
+}

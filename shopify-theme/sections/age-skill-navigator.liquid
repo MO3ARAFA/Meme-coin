@@ -1,0 +1,640 @@
+{%- comment -%}
+  Hroofy | حروفي — Age & Skill Navigator
+  Colorful interactive cards linking to collections, grouped in two tabs:
+  "by age" and "by skill". Each card is a block (drag & drop).
+{%- endcomment -%}
+
+{%- liquid
+  assign s = section.settings
+  assign nav_id = 'hroofy-nav-' | append: section.id
+  assign has_age = false
+  assign has_skill = false
+  for block in section.blocks
+    if block.settings.group == 'age'
+      assign has_age = true
+    else
+      assign has_skill = true
+    endif
+  endfor
+  assign show_tabs = false
+  if s.show_tabs and has_age and has_skill
+    assign show_tabs = true
+  endif
+-%}
+
+{% style %}
+  #{{ nav_id }} {
+    --hn-bg: {{ s.background_color }};
+    --hn-text: {{ s.text_color }};
+    --hn-tab-active: {{ s.tab_active_color }};
+    padding-block: {{ s.padding_top }}px {{ s.padding_bottom }}px;
+  }
+
+  .hroofy-nav {
+    background: var(--hn-bg);
+    color: var(--hn-text);
+    font-family: var(--font-body--family, 'Cairo', system-ui, sans-serif);
+  }
+
+  .hroofy-nav__inner {
+    max-width: 1200px;
+    margin-inline: auto;
+    padding-inline: 20px;
+  }
+
+  .hroofy-nav__header {
+    text-align: center;
+    margin-block-end: 28px;
+  }
+
+  .hroofy-nav__title {
+    font-family: var(--font-heading--family, 'Baloo Bhaijaan 2', 'Cairo', sans-serif);
+    font-weight: 800;
+    font-size: clamp(28px, 4.4vw, 44px);
+    line-height: 1.2;
+    margin: 0 0 10px;
+    color: var(--hn-text);
+  }
+
+  .hroofy-nav__subtitle {
+    font-size: 17px;
+    line-height: 1.7;
+    opacity: 0.85;
+    margin: 0 auto;
+    max-width: 620px;
+  }
+
+  .hroofy-nav__tabs {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-block-end: 30px;
+    padding: 6px;
+    width: fit-content;
+    margin-inline: auto;
+    border-radius: 999px;
+    background: #ffffff;
+    box-shadow:
+      0 6px 0 rgb(0 0 0 / 0.06),
+      inset 0 -3px 0 rgb(0 0 0 / 0.04);
+  }
+
+  .hroofy-nav__tab {
+    appearance: none;
+    border: 0;
+    cursor: pointer;
+    min-height: 48px;
+    padding: 10px 26px;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--hn-text);
+    font-family: var(--font-heading--family, 'Baloo Bhaijaan 2', 'Cairo', sans-serif);
+    font-weight: 800;
+    font-size: 17px;
+    transition:
+      background 0.2s ease,
+      color 0.2s ease,
+      transform 0.2s ease;
+  }
+
+  .hroofy-nav__tab[aria-selected='true'] {
+    background: var(--hn-tab-active);
+    color: #ffffff;
+    box-shadow: inset 0 -4px 0 rgb(0 0 0 / 0.15);
+  }
+
+  .hroofy-nav__tab:focus-visible {
+    outline: 3px dashed var(--hn-tab-active);
+    outline-offset: 3px;
+  }
+
+  .hroofy-nav__grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  @media screen and (min-width: 750px) {
+    .hroofy-nav__grid {
+      grid-template-columns: repeat({{ s.columns_desktop }}, minmax(0, 1fr));
+      gap: 24px;
+    }
+  }
+
+  .hroofy-nav__item[hidden] {
+    display: none;
+  }
+
+  .hroofy-card {
+    --card-color: #ffd23f;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    height: 100%;
+    padding: 26px 16px 22px;
+    border-radius: 32px;
+    background: var(--card-color);
+    color: var(--card-text, #2b2d42);
+    text-align: center;
+    text-decoration: none;
+    overflow: hidden;
+    box-shadow:
+      0 10px 0 rgb(0 0 0 / 0.1),
+      inset 0 -8px 0 rgb(0 0 0 / 0.08),
+      inset 0 6px 0 rgb(255 255 255 / 0.35);
+    transition:
+      transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1),
+      box-shadow 0.22s ease;
+  }
+
+  .hroofy-card::before {
+    content: '';
+    position: absolute;
+    width: 140px;
+    height: 140px;
+    border-radius: 50%;
+    background: rgb(255 255 255 / 0.22);
+    inset-block-start: -50px;
+    inset-inline-end: -40px;
+  }
+
+  .hroofy-card:hover {
+    transform: translateY(-8px) rotate(-1.5deg);
+    box-shadow:
+      0 16px 0 rgb(0 0 0 / 0.1),
+      inset 0 -8px 0 rgb(0 0 0 / 0.08),
+      inset 0 6px 0 rgb(255 255 255 / 0.35);
+  }
+
+  .hroofy-card:active {
+    transform: translateY(4px);
+  }
+
+  .hroofy-card:focus-visible {
+    outline: 4px dashed var(--hn-text);
+    outline-offset: 4px;
+  }
+
+  .hroofy-card__emoji {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 84px;
+    height: 84px;
+    border-radius: 28px;
+    background: #ffffff;
+    font-size: 44px;
+    line-height: 1;
+    box-shadow:
+      0 6px 0 rgb(0 0 0 / 0.08),
+      inset 0 -4px 0 rgb(0 0 0 / 0.05);
+    transition: transform 0.3s ease;
+  }
+
+  .hroofy-card:hover .hroofy-card__emoji {
+    transform: scale(1.08) rotate(6deg);
+  }
+
+  .hroofy-card__image {
+    position: relative;
+    width: 84px;
+    height: 84px;
+    border-radius: 28px;
+    overflow: hidden;
+    background: #ffffff;
+    box-shadow: 0 6px 0 rgb(0 0 0 / 0.08);
+  }
+
+  .hroofy-card__image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .hroofy-card__title {
+    position: relative;
+    margin: 6px 0 0;
+    font-family: var(--font-heading--family, 'Baloo Bhaijaan 2', 'Cairo', sans-serif);
+    font-weight: 800;
+    font-size: clamp(18px, 2.4vw, 24px);
+    line-height: 1.25;
+  }
+
+  .hroofy-card__subtitle {
+    position: relative;
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+    opacity: 0.9;
+  }
+
+  .hroofy-card__meta {
+    position: relative;
+    margin-block-start: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 0.9);
+    color: #2b2d42;
+    font-size: 14px;
+    font-weight: 800;
+  }
+
+  .hroofy-card__arrow {
+    display: inline-block;
+    transition: transform 0.2s ease;
+  }
+
+  [dir='rtl'] .hroofy-card__arrow {
+    transform: scaleX(-1);
+  }
+
+  .hroofy-card:hover .hroofy-card__arrow {
+    transform: translateX(3px);
+  }
+
+  [dir='rtl'] .hroofy-card:hover .hroofy-card__arrow {
+    transform: scaleX(-1) translateX(3px);
+  }
+
+  .hroofy-nav__panel-anim {
+    animation: hroofy-nav-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  @keyframes hroofy-nav-pop {
+    from {
+      opacity: 0;
+      transform: translateY(14px) scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hroofy-nav *,
+    .hroofy-nav *::before {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+{% endstyle %}
+
+<hroofy-age-nav
+  id="{{ nav_id }}"
+  class="hroofy-nav"
+  data-default-group="{{ s.default_tab }}"
+  {% if show_tabs %}
+    data-tabs="true"
+  {% endif %}
+>
+  <div class="hroofy-nav__inner">
+    <div class="hroofy-nav__header">
+      {%- if s.heading != blank -%}
+        <h2 class="hroofy-nav__title">{{ s.heading | escape }}</h2>
+      {%- endif -%}
+      {%- if s.subheading != blank -%}
+        <p class="hroofy-nav__subtitle">{{ s.subheading | escape }}</p>
+      {%- endif -%}
+    </div>
+
+    {%- if show_tabs -%}
+      <div class="hroofy-nav__tabs" role="tablist" aria-label="{{ s.heading | escape }}">
+        <button
+          type="button"
+          class="hroofy-nav__tab"
+          role="tab"
+          id="{{ nav_id }}-tab-age"
+          aria-controls="{{ nav_id }}-panel"
+          aria-selected="{% if s.default_tab == 'age' %}true{% else %}false{% endif %}"
+          data-group="age"
+        >
+          {{ s.tab_age_label | escape }}
+        </button>
+        <button
+          type="button"
+          class="hroofy-nav__tab"
+          role="tab"
+          id="{{ nav_id }}-tab-skill"
+          aria-controls="{{ nav_id }}-panel"
+          aria-selected="{% if s.default_tab == 'skill' %}true{% else %}false{% endif %}"
+          data-group="skill"
+        >
+          {{ s.tab_skill_label | escape }}
+        </button>
+      </div>
+    {%- endif -%}
+
+    <div
+      id="{{ nav_id }}-panel"
+      class="hroofy-nav__panel"
+      {% if show_tabs %}
+        role="tabpanel"
+        aria-labelledby="{{ nav_id }}-tab-{{ s.default_tab }}"
+      {% endif %}
+    >
+    <ul class="hroofy-nav__grid" role="list">
+      {%- for block in section.blocks -%}
+        {%- liquid
+          assign b = block.settings
+          assign card_collection = b.collection
+          assign card_title = b.title
+          if card_title == blank and card_collection != blank
+            assign card_title = card_collection.title
+          endif
+          assign card_url = '#'
+          if card_collection != blank
+            assign card_url = card_collection.url
+          endif
+          assign hidden_card = false
+          if show_tabs and b.group != s.default_tab
+            assign hidden_card = true
+          endif
+        -%}
+        <li
+          class="hroofy-nav__item"
+          data-group="{{ b.group }}"
+          {% if hidden_card %}
+            hidden
+          {% endif %}
+          {{ block.shopify_attributes }}
+        >
+          <a
+            class="hroofy-card"
+            href="{{ card_url }}"
+            style="--card-color: {{ b.card_color }}; --card-text: {{ b.card_text_color }};"
+          >
+            {%- if b.image != blank -%}
+              <span class="hroofy-card__image">
+                {{ b.image | image_url: width: 200 | image_tag: loading: 'lazy', alt: card_title }}
+              </span>
+            {%- else -%}
+              <span class="hroofy-card__emoji" aria-hidden="true">{{ b.emoji }}</span>
+            {%- endif -%}
+
+            <h3 class="hroofy-card__title">{{ card_title | escape }}</h3>
+
+            {%- if b.subtitle != blank -%}
+              <p class="hroofy-card__subtitle">{{ b.subtitle | escape }}</p>
+            {%- endif -%}
+
+            <span class="hroofy-card__meta">
+              {%- if card_collection != blank and s.show_count -%}
+                {{ card_collection.products_count }} {{ s.count_label | escape }} ·
+              {%- endif %}
+              {{ b.button_label | escape }}
+              <span class="hroofy-card__arrow" aria-hidden="true">→</span>
+            </span>
+          </a>
+        </li>
+      {%- endfor -%}
+    </ul>
+    </div>
+  </div>
+</hroofy-age-nav>
+
+{% javascript %}
+  if (!customElements.get('hroofy-age-nav')) {
+    class HroofyAgeNav extends HTMLElement {
+      connectedCallback() {
+        if (this.dataset.tabs !== 'true') return;
+        this.tabs = Array.from(this.querySelectorAll('[role="tab"]'));
+        this.items = Array.from(this.querySelectorAll('.hroofy-nav__item'));
+        this.panel = this.querySelector('.hroofy-nav__panel');
+        this.grid = this.querySelector('.hroofy-nav__grid');
+
+        this.tabs.forEach((tab, index) => {
+          tab.addEventListener('click', () => this.select(tab.dataset.group));
+          tab.addEventListener('keydown', (event) => this.onKeydown(event, index));
+          tab.setAttribute('tabindex', tab.getAttribute('aria-selected') === 'true' ? '0' : '-1');
+        });
+      }
+
+      onKeydown(event, index) {
+        const isRtl = document.documentElement.dir === 'rtl';
+        let next = null;
+        if (event.key === 'ArrowRight') next = isRtl ? index - 1 : index + 1;
+        if (event.key === 'ArrowLeft') next = isRtl ? index + 1 : index - 1;
+        if (event.key === 'Home') next = 0;
+        if (event.key === 'End') next = this.tabs.length - 1;
+        if (next === null) return;
+        event.preventDefault();
+        const target = this.tabs[(next + this.tabs.length) % this.tabs.length];
+        this.select(target.dataset.group);
+        target.focus();
+      }
+
+      select(group) {
+        this.tabs.forEach((tab) => {
+          const active = tab.dataset.group === group;
+          tab.setAttribute('aria-selected', active ? 'true' : 'false');
+          tab.setAttribute('tabindex', active ? '0' : '-1');
+          if (active) this.panel.setAttribute('aria-labelledby', tab.id);
+        });
+
+        this.items.forEach((item) => {
+          item.hidden = item.dataset.group !== group;
+        });
+
+        this.grid.classList.remove('hroofy-nav__panel-anim');
+        void this.grid.offsetWidth;
+        this.grid.classList.add('hroofy-nav__panel-anim');
+      }
+    }
+
+    customElements.define('hroofy-age-nav', HroofyAgeNav);
+  }
+{% endjavascript %}
+
+{% schema %}
+{
+  "name": "Hroofy Age & Skill Nav",
+  "tag": "section",
+  "class": "hroofy-nav-section",
+  "settings": [
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "العنوان",
+      "default": "اختار الكتاب المناسب لطفلك"
+    },
+    {
+      "type": "text",
+      "id": "subheading",
+      "label": "الوصف",
+      "default": "تصفح حسب عمر طفلك أو حسب المهارة اللي عايزه يتعلمها"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_tabs",
+      "label": "إظهار تبويبات (العمر / المهارة)",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "tab_age_label",
+      "label": "اسم تبويب العمر",
+      "default": "حسب العمر 🎂"
+    },
+    {
+      "type": "text",
+      "id": "tab_skill_label",
+      "label": "اسم تبويب المهارة",
+      "default": "حسب المهارة 🧠"
+    },
+    {
+      "type": "select",
+      "id": "default_tab",
+      "label": "التبويب الافتراضي",
+      "options": [
+        { "value": "age", "label": "العمر" },
+        { "value": "skill", "label": "المهارة" }
+      ],
+      "default": "age"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_count",
+      "label": "إظهار عدد المنتجات",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "count_label",
+      "label": "كلمة عدد المنتجات",
+      "default": "كتب"
+    },
+    {
+      "type": "range",
+      "id": "columns_desktop",
+      "label": "عدد الأعمدة على الكمبيوتر",
+      "min": 2,
+      "max": 4,
+      "step": 1,
+      "default": 3
+    },
+    {
+      "type": "color",
+      "id": "background_color",
+      "label": "لون الخلفية",
+      "default": "#FFFBF2"
+    },
+    {
+      "type": "color",
+      "id": "text_color",
+      "label": "لون النص",
+      "default": "#2B2D42"
+    },
+    {
+      "type": "color",
+      "id": "tab_active_color",
+      "label": "لون التبويب النشط",
+      "default": "#FF6B4A"
+    },
+    {
+      "type": "range",
+      "id": "padding_top",
+      "label": "مسافة علوية",
+      "min": 0,
+      "max": 120,
+      "step": 4,
+      "unit": "px",
+      "default": 64
+    },
+    {
+      "type": "range",
+      "id": "padding_bottom",
+      "label": "مسافة سفلية",
+      "min": 0,
+      "max": 120,
+      "step": 4,
+      "unit": "px",
+      "default": 64
+    }
+  ],
+  "blocks": [
+    {
+      "type": "card",
+      "name": "بطاقة",
+      "settings": [
+        {
+          "type": "select",
+          "id": "group",
+          "label": "التبويب",
+          "options": [
+            { "value": "age", "label": "حسب العمر" },
+            { "value": "skill", "label": "حسب المهارة" }
+          ],
+          "default": "age"
+        },
+        {
+          "type": "collection",
+          "id": "collection",
+          "label": "المجموعة"
+        },
+        {
+          "type": "text",
+          "id": "title",
+          "label": "العنوان",
+          "info": "لو فاضي، هيتعرض اسم المجموعة."
+        },
+        {
+          "type": "text",
+          "id": "subtitle",
+          "label": "وصف قصير"
+        },
+        {
+          "type": "text",
+          "id": "emoji",
+          "label": "إيموجي",
+          "default": "🖍️"
+        },
+        {
+          "type": "image_picker",
+          "id": "image",
+          "label": "صورة بدل الإيموجي (اختياري)"
+        },
+        {
+          "type": "text",
+          "id": "button_label",
+          "label": "نص الزر",
+          "default": "تصفح"
+        },
+        {
+          "type": "color",
+          "id": "card_color",
+          "label": "لون البطاقة",
+          "default": "#FFD23F"
+        },
+        {
+          "type": "color",
+          "id": "card_text_color",
+          "label": "لون نص البطاقة",
+          "default": "#2B2D42"
+        }
+      ]
+    }
+  ],
+  "presets": [
+    {
+      "name": "Hroofy Age & Skill Nav",
+      "blocks": [
+        { "type": "card", "settings": { "group": "age", "title": "3 - 4 سنوات", "subtitle": "خطوط عريضة ورسومات كبيرة", "emoji": "🧸", "card_color": "#FFD23F" } },
+        { "type": "card", "settings": { "group": "age", "title": "5 - 6 سنوات", "subtitle": "تتبع الحروف والعد", "emoji": "🎒", "card_color": "#7BD389" } },
+        { "type": "card", "settings": { "group": "age", "title": "7 سنوات فأكثر", "subtitle": "تفاصيل وتحديات أكبر", "emoji": "🚀", "card_color": "#8FB3F5", "card_text_color": "#2B2D42" } },
+        { "type": "card", "settings": { "group": "skill", "title": "الحروف", "subtitle": "عربي وإنجليزي", "emoji": "🔤", "card_color": "#FF8FB1" } },
+        { "type": "card", "settings": { "group": "skill", "title": "الأرقام والحساب", "subtitle": "عد وجمع وطرح", "emoji": "🔢", "card_color": "#2EC4B6" } },
+        { "type": "card", "settings": { "group": "skill", "title": "الرسم الإبداعي", "subtitle": "حيوانات وفضاء وارسم وأكمل", "emoji": "🎨", "card_color": "#C3A2FF", "card_text_color": "#2B2D42" } }
+      ]
+    }
+  ]
+}
+{% endschema %}

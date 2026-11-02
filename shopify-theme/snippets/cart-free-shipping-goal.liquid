@@ -1,0 +1,341 @@
+{% doc %}
+  Hroofy | حروفي — Cart goal / upsell progress bar (free shipping + free mini book).
+
+  Rendered inside snippets/cart-drawer.liquid (and optionally the cart page).
+  Thresholds are read from shop metafields so the merchant can change them in
+  Shopify admin > Settings > Custom data > Shop:
+    - hroofy.free_shipping_threshold  (number_integer, in store currency, default 750)
+    - hroofy.gift_threshold           (number_integer, in store currency, default 1500)
+
+  The drawer is re-rendered by the theme's Section Rendering API after every
+  cart change; the <hroofy-cart-goal> element also listens to `cart:update`
+  and re-fetches /cart.js as a fallback so the bar is always correct.
+
+  @param {string} [context] - 'drawer' or 'page' (styling hook)
+{% enddoc %}
+
+{%- liquid
+  assign context = context | default: 'drawer'
+
+  assign ship_threshold = 750
+  if shop.metafields.hroofy.free_shipping_threshold.value != blank
+    assign ship_threshold = shop.metafields.hroofy.free_shipping_threshold.value
+  endif
+  assign gift_threshold = 1500
+  if shop.metafields.hroofy.gift_threshold.value != blank
+    assign gift_threshold = shop.metafields.hroofy.gift_threshold.value
+  endif
+
+  assign ship_cents = ship_threshold | times: 100
+  assign gift_cents = gift_threshold | times: 100
+  if gift_cents <= ship_cents
+    assign gift_cents = ship_cents | times: 2
+  endif
+
+  assign total = cart.total_price
+  assign percent = total | times: 100 | divided_by: gift_cents
+  if percent > 100
+    assign percent = 100
+  endif
+  assign ship_marker = ship_cents | times: 100 | divided_by: gift_cents
+
+  if total < ship_cents
+    assign goal_state = 'shipping'
+    assign remaining = ship_cents | minus: total
+  elsif total < gift_cents
+    assign goal_state = 'gift'
+    assign remaining = gift_cents | minus: total
+  else
+    assign goal_state = 'done'
+    assign remaining = 0
+  endif
+
+  assign msg_shipping = 'باقي [amount] وتحصل على شحن مجاني 🚚'
+  assign msg_gift = '🎉 الشحن بقى مجاني! زوّد [amount] وخد كتاب تلوين مصغر هدية 🎁'
+  assign msg_done = '🏆 مبروك! شحن مجاني + كتاب تلوين مصغر هدية مع طلبك'
+
+  assign amount_html = remaining | money | prepend: '<strong>' | append: '</strong>'
+-%}
+
+<hroofy-cart-goal
+  class="hroofy-goal hroofy-goal--{{ context }}"
+  data-ship-cents="{{ ship_cents }}"
+  data-gift-cents="{{ gift_cents }}"
+  data-total-cents="{{ total }}"
+  data-currency="{{ cart.currency.iso_code }}"
+  data-msg-shipping="{{ msg_shipping | escape }}"
+  data-msg-gift="{{ msg_gift | escape }}"
+  data-msg-done="{{ msg_done | escape }}"
+  data-state="{{ goal_state }}"
+>
+  <p class="hroofy-goal__message" aria-live="polite">
+    {%- case goal_state -%}
+      {%- when 'shipping' -%}
+        {{ msg_shipping | replace: '[amount]', amount_html }}
+      {%- when 'gift' -%}
+        {{ msg_gift | replace: '[amount]', amount_html }}
+      {%- else -%}
+        {{ msg_done }}
+    {%- endcase -%}
+  </p>
+
+  <div
+    class="hroofy-goal__track"
+    role="progressbar"
+    aria-valuemin="0"
+    aria-valuemax="100"
+    aria-valuenow="{{ percent }}"
+    aria-label="التقدم نحو الهدايا"
+  >
+    <div class="hroofy-goal__fill" style="width: {{ percent }}%;"></div>
+    <span
+      class="hroofy-goal__milestone{% if total >= ship_cents %} is-reached{% endif %}"
+      style="inset-inline-start: {{ ship_marker }}%;"
+      data-milestone="shipping"
+      title="شحن مجاني"
+    >🚚</span>
+    <span
+      class="hroofy-goal__milestone hroofy-goal__milestone--end{% if total >= gift_cents %} is-reached{% endif %}"
+      data-milestone="gift"
+      title="كتاب هدية"
+    >🎁</span>
+  </div>
+
+  <div class="hroofy-goal__labels" aria-hidden="true">
+    <span style="inset-inline-start: {{ ship_marker }}%;">{{ ship_cents | money_without_trailing_zeros }}</span>
+    <span class="hroofy-goal__labels-end">{{ gift_cents | money_without_trailing_zeros }}</span>
+  </div>
+</hroofy-cart-goal>
+
+{% style %}
+  .hroofy-goal {
+    display: block;
+    margin: 12px 0 18px;
+    padding: 14px 16px 26px;
+    border-radius: 22px;
+    background: linear-gradient(135deg, #fff4d6, #ffe3ec);
+    color: #2b2d42;
+    font-family: var(--font-body--family, 'Cairo', system-ui, sans-serif);
+    box-shadow:
+      0 5px 0 rgb(0 0 0 / 0.05),
+      inset 0 -3px 0 rgb(0 0 0 / 0.04);
+  }
+
+  .hroofy-goal--drawer {
+    margin-inline: var(--cart-drawer-padding, 16px);
+  }
+
+  .hroofy-goal__message {
+    margin: 0 0 14px;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.6;
+    text-align: center;
+  }
+
+  .hroofy-goal__message strong {
+    color: #cc3f25;
+    font-weight: 800;
+  }
+
+  .hroofy-goal__track {
+    position: relative;
+    height: 16px;
+    border-radius: 999px;
+    background: #ffffff;
+    box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.08);
+  }
+
+  .hroofy-goal__fill {
+    height: 100%;
+    max-width: 100%;
+    border-radius: inherit;
+    background: repeating-linear-gradient(-45deg, #ff6b4a 0 10px, #ff8f73 10px 20px);
+    background-size: 28px 28px;
+    animation: hroofy-goal-stripes 1s linear infinite;
+    transition: width 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .hroofy-goal[data-state='gift'] .hroofy-goal__fill {
+    background: repeating-linear-gradient(-45deg, #2ec4b6 0 10px, #5ad8cc 10px 20px);
+  }
+
+  .hroofy-goal[data-state='done'] .hroofy-goal__fill {
+    background: repeating-linear-gradient(-45deg, #7bd389 0 10px, #9be3a6 10px 20px);
+  }
+
+  .hroofy-goal__milestone {
+    position: absolute;
+    top: 50%;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: #ffffff;
+    font-size: 15px;
+    line-height: 1;
+    transform: translate(-50%, -50%);
+    box-shadow:
+      0 0 0 3px #ffd23f,
+      0 4px 0 rgb(0 0 0 / 0.1);
+    filter: grayscale(1);
+    transition:
+      filter 0.3s ease,
+      transform 0.3s ease;
+  }
+
+  [dir='rtl'] .hroofy-goal__milestone {
+    transform: translate(50%, -50%);
+  }
+
+  .hroofy-goal__milestone--end {
+    inset-inline-end: -6px;
+    inset-inline-start: auto;
+    transform: translateY(-50%);
+  }
+
+  [dir='rtl'] .hroofy-goal__milestone--end {
+    transform: translateY(-50%);
+  }
+
+  .hroofy-goal__milestone.is-reached {
+    filter: none;
+    box-shadow:
+      0 0 0 3px #7bd389,
+      0 4px 0 rgb(0 0 0 / 0.1);
+    animation: hroofy-goal-bounce 0.6s ease;
+  }
+
+  .hroofy-goal__labels {
+    position: relative;
+    height: 0;
+    font-size: 11px;
+    font-weight: 700;
+    opacity: 0.7;
+  }
+
+  .hroofy-goal__labels span {
+    position: absolute;
+    top: 20px;
+    transform: translateX(-50%);
+    white-space: nowrap;
+  }
+
+  [dir='rtl'] .hroofy-goal__labels span {
+    transform: translateX(50%);
+  }
+
+  .hroofy-goal__labels .hroofy-goal__labels-end {
+    inset-inline-end: 0;
+    transform: none;
+  }
+
+  [dir='rtl'] .hroofy-goal__labels .hroofy-goal__labels-end {
+    transform: none;
+  }
+
+  @keyframes hroofy-goal-stripes {
+    to {
+      background-position: 28px 0;
+    }
+  }
+
+  @keyframes hroofy-goal-bounce {
+    0%,
+    100% {
+      scale: 1;
+    }
+    50% {
+      scale: 1.3;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hroofy-goal *,
+    .hroofy-goal__fill {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+{% endstyle %}
+
+<script>
+  if (!customElements.get('hroofy-cart-goal')) {
+    class HroofyCartGoal extends HTMLElement {
+      connectedCallback() {
+        this.onCartUpdate = this.onCartUpdate.bind(this);
+        document.addEventListener('cart:update', this.onCartUpdate);
+      }
+
+      disconnectedCallback() {
+        document.removeEventListener('cart:update', this.onCartUpdate);
+      }
+
+      async onCartUpdate() {
+        try {
+          const root = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || '/';
+          const response = await fetch(`${root}cart.js`, { headers: { Accept: 'application/json' } });
+          if (!response.ok) return;
+          const cart = await response.json();
+          this.render(cart.total_price, cart.currency);
+        } catch (error) {
+          /* The drawer is also re-rendered by the theme, so a failed fetch is harmless. */
+        }
+      }
+
+      format(cents, currency) {
+        try {
+          return new Intl.NumberFormat(document.documentElement.lang || 'ar', {
+            style: 'currency',
+            currency: currency || this.dataset.currency || 'EGP',
+            maximumFractionDigits: cents % 100 === 0 ? 0 : 2,
+          }).format(cents / 100);
+        } catch (error) {
+          return `${(cents / 100).toFixed(2)} ${currency || ''}`;
+        }
+      }
+
+      render(total, currency) {
+        const ship = Number(this.dataset.shipCents);
+        const gift = Number(this.dataset.giftCents);
+        const percent = Math.min(100, Math.floor((total * 100) / gift));
+        let state = 'done';
+        let remaining = 0;
+        if (total < ship) {
+          state = 'shipping';
+          remaining = ship - total;
+        } else if (total < gift) {
+          state = 'gift';
+          remaining = gift - total;
+        }
+
+        this.dataset.state = state;
+        this.dataset.totalCents = String(total);
+
+        const template = this.dataset[`msg${state.charAt(0).toUpperCase()}${state.slice(1)}`] || '';
+        const message = this.querySelector('.hroofy-goal__message');
+        if (message) {
+          message.textContent = '';
+          const parts = template.split('[amount]');
+          parts.forEach((part, index) => {
+            message.append(document.createTextNode(part));
+            if (index < parts.length - 1) {
+              const strong = document.createElement('strong');
+              strong.textContent = this.format(remaining, currency);
+              message.append(strong);
+            }
+          });
+        }
+
+        const fill = this.querySelector('.hroofy-goal__fill');
+        if (fill) fill.style.width = `${percent}%`;
+        this.querySelector('.hroofy-goal__track')?.setAttribute('aria-valuenow', String(percent));
+        this.querySelector('[data-milestone="shipping"]')?.classList.toggle('is-reached', total >= ship);
+        this.querySelector('[data-milestone="gift"]')?.classList.toggle('is-reached', total >= gift);
+      }
+    }
+
+    customElements.define('hroofy-cart-goal', HroofyCartGoal);
+  }
+</script>

@@ -1,0 +1,765 @@
+{%- comment -%}
+  Hroofy | حروفي — "جرّب التلوين قبل الشراء"
+  Interactive SVG coloring preview for the product template.
+
+  The drawing is chosen from the product metafield custom.preview_character:
+    - "fish"   -> sea fish scene   (animals book)
+    - "rocket" -> rocket scene      (space book)
+    - "star"   -> star & moon scene (creative books / bundles)
+    - any other value (أ, ب, A, 5 ...) -> big letter / number scene
+  If the metafield is empty, the section setting "fallback_character" is used.
+{%- endcomment -%}
+
+{%- liquid
+  assign s = section.settings
+  assign cp_id = 'hroofy-cp-' | append: section.id
+
+  assign preview_key = s.fallback_character | default: 'أ'
+  if product.metafields.custom.preview_character.value != blank
+    assign preview_key = product.metafields.custom.preview_character.value
+  endif
+  assign preview_mode = 'glyph'
+  case preview_key
+    when 'fish'
+      assign preview_mode = 'fish'
+    when 'rocket'
+      assign preview_mode = 'rocket'
+    when 'star'
+      assign preview_mode = 'star'
+  endcase
+
+  assign palette = s.palette | remove: ' ' | split: ','
+-%}
+
+{% style %}
+  #{{ cp_id }} {
+    --cp-bg-1: {{ s.bg_color_1 }};
+    --cp-bg-2: {{ s.bg_color_2 }};
+    --cp-text: {{ s.text_color }};
+    --cp-accent: {{ s.accent_color }};
+    --cp-accent-shadow: {{ s.accent_color | color_darken: 18 }};
+    --cp-outline: #2b2d42;
+    padding-block: {{ s.padding_top }}px {{ s.padding_bottom }}px;
+  }
+
+  .hroofy-cp {
+    display: block;
+    background: linear-gradient(160deg, var(--cp-bg-1), var(--cp-bg-2));
+    color: var(--cp-text);
+    font-family: var(--font-body--family, 'Cairo', system-ui, sans-serif);
+  }
+
+  .hroofy-cp__inner {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 28px;
+    align-items: center;
+    max-width: 1100px;
+    margin-inline: auto;
+    padding-inline: 20px;
+  }
+
+  @media screen and (min-width: 990px) {
+    .hroofy-cp__inner {
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 48px;
+    }
+  }
+
+  .hroofy-cp__copy {
+    text-align: center;
+  }
+
+  @media screen and (min-width: 990px) {
+    .hroofy-cp__copy {
+      text-align: start;
+    }
+  }
+
+  .hroofy-cp__badge {
+    display: inline-block;
+    padding: 6px 16px;
+    margin-block-end: 14px;
+    border-radius: 999px;
+    background: #ffffff;
+    font-weight: 800;
+    font-size: 14px;
+    box-shadow: 0 5px 0 rgb(0 0 0 / 0.07);
+  }
+
+  .hroofy-cp__title {
+    font-family: var(--font-heading--family, 'Baloo Bhaijaan 2', 'Cairo', sans-serif);
+    font-weight: 800;
+    font-size: clamp(26px, 4vw, 40px);
+    line-height: 1.25;
+    margin: 0 0 12px;
+    color: var(--cp-text);
+  }
+
+  .hroofy-cp__text {
+    font-size: 17px;
+    line-height: 1.8;
+    margin: 0 0 22px;
+    opacity: 0.9;
+  }
+
+  .hroofy-cp__progress {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 15px;
+  }
+
+  @media screen and (min-width: 990px) {
+    .hroofy-cp__progress {
+      justify-content: flex-start;
+    }
+  }
+
+  .hroofy-cp__progress-track {
+    flex: 0 1 220px;
+    height: 14px;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 0.85);
+    overflow: hidden;
+    box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.08);
+  }
+
+  .hroofy-cp__progress-fill {
+    width: 0%;
+    height: 100%;
+    border-radius: inherit;
+    background: repeating-linear-gradient(
+      45deg,
+      var(--cp-accent) 0 12px,
+      color-mix(in srgb, var(--cp-accent) 75%, #ffffff) 12px 24px
+    );
+    transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .hroofy-cp__board {
+    position: relative;
+    padding: 18px;
+    border-radius: 36px;
+    background: #ffffff;
+    box-shadow:
+      0 14px 0 rgb(0 0 0 / 0.07),
+      0 24px 48px rgb(0 0 0 / 0.12);
+  }
+
+  .hroofy-cp__canvas {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    height: auto;
+    margin-inline: auto;
+    border-radius: 24px;
+    touch-action: manipulation;
+    user-select: none;
+  }
+
+  .hroofy-cp__region {
+    fill: #ffffff;
+    stroke: var(--cp-outline);
+    stroke-width: 6;
+    stroke-linejoin: round;
+    cursor: pointer;
+    transition:
+      fill 0.25s ease,
+      transform 0.25s ease;
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  .hroofy-cp__region:hover {
+    filter: brightness(0.96);
+  }
+
+  .hroofy-cp__region:focus-visible {
+    outline: none;
+    stroke: var(--cp-accent);
+    stroke-width: 9;
+  }
+
+  .hroofy-cp__region.is-popping {
+    animation: hroofy-cp-pop 0.35s ease;
+  }
+
+  .hroofy-cp__glyph {
+    font-family: var(--font-heading--family, 'Baloo Bhaijaan 2', 'Cairo', sans-serif);
+    font-weight: 800;
+    paint-order: stroke fill;
+    stroke-width: 10;
+  }
+
+  .hroofy-cp__detail {
+    fill: var(--cp-outline);
+    pointer-events: none;
+  }
+
+  .hroofy-cp__toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-block-start: 16px;
+  }
+
+  .hroofy-cp__swatch {
+    appearance: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 4px solid #ffffff;
+    background: var(--swatch);
+    cursor: pointer;
+    box-shadow:
+      0 0 0 2px rgb(0 0 0 / 0.1),
+      0 5px 0 rgb(0 0 0 / 0.12);
+    transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .hroofy-cp__swatch:hover {
+    transform: translateY(-3px);
+  }
+
+  .hroofy-cp__swatch[aria-pressed='true'] {
+    transform: translateY(-4px) scale(1.15);
+    box-shadow:
+      0 0 0 4px var(--cp-outline),
+      0 6px 0 rgb(0 0 0 / 0.14);
+  }
+
+  .hroofy-cp__swatch--eraser {
+    background:
+      linear-gradient(45deg, transparent 44%, #ff6b4a 44% 56%, transparent 56%),
+      #ffffff;
+  }
+
+  .hroofy-cp__swatch:focus-visible,
+  .hroofy-cp__tool:focus-visible,
+  .hroofy-cp__cta:focus-visible {
+    outline: 3px dashed var(--cp-outline);
+    outline-offset: 3px;
+  }
+
+  .hroofy-cp__tool {
+    appearance: none;
+    min-height: 44px;
+    padding: 8px 18px;
+    border: 0;
+    border-radius: 999px;
+    background: #f1f3f8;
+    color: var(--cp-outline);
+    font-family: inherit;
+    font-weight: 800;
+    font-size: 15px;
+    cursor: pointer;
+  }
+
+  .hroofy-cp__tool:hover {
+    background: #e4e8f1;
+  }
+
+  .hroofy-cp__success {
+    display: none;
+    margin-block-start: 18px;
+    padding: 16px;
+    border-radius: 24px;
+    background: #fff7d6;
+    text-align: center;
+    animation: hroofy-cp-pop 0.45s ease;
+  }
+
+  .hroofy-cp[data-complete='true'] .hroofy-cp__success {
+    display: block;
+  }
+
+  .hroofy-cp__success-text {
+    margin: 0 0 12px;
+    font-family: var(--font-heading--family, 'Baloo Bhaijaan 2', 'Cairo', sans-serif);
+    font-weight: 800;
+    font-size: 20px;
+  }
+
+  .hroofy-cp__cta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 52px;
+    padding: 12px 30px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--cp-accent);
+    color: var(--cp-outline);
+    font-family: var(--font-heading--family, 'Baloo Bhaijaan 2', 'Cairo', sans-serif);
+    font-weight: 800;
+    font-size: 18px;
+    cursor: pointer;
+    box-shadow: 0 6px 0 var(--cp-accent-shadow);
+    transition: transform 0.15s ease;
+  }
+
+  .hroofy-cp__cta:hover {
+    transform: translateY(-2px);
+  }
+
+  .hroofy-cp__cta:active {
+    transform: translateY(4px);
+    box-shadow: 0 2px 0 var(--cp-accent-shadow);
+  }
+
+  .hroofy-cp__confetti {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+    border-radius: inherit;
+  }
+
+  .hroofy-cp__confetti span {
+    position: absolute;
+    top: -12px;
+    width: 10px;
+    height: 16px;
+    border-radius: 3px;
+    background: var(--c);
+    inset-inline-start: var(--x);
+    animation: hroofy-cp-fall var(--d) ease-in forwards;
+  }
+
+  @keyframes hroofy-cp-pop {
+    0% {
+      transform: scale(1);
+    }
+    45% {
+      transform: scale(1.06);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  @keyframes hroofy-cp-fall {
+    to {
+      transform: translateY(520px) rotate(540deg);
+      opacity: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hroofy-cp *,
+    .hroofy-cp *::before {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+{% endstyle %}
+
+<hroofy-coloring-preview
+  id="{{ cp_id }}"
+  class="hroofy-cp"
+  data-complete="false"
+  data-progress-template="{{ s.progress_text | escape }}"
+>
+  <div class="hroofy-cp__inner">
+    <div class="hroofy-cp__copy">
+      {%- if s.badge != blank -%}
+        <span class="hroofy-cp__badge">{{ s.badge | escape }}</span>
+      {%- endif -%}
+      <h2 class="hroofy-cp__title">{{ s.heading | escape }}</h2>
+      {%- if s.text != blank -%}
+        <p class="hroofy-cp__text">{{ s.text | escape }}</p>
+      {%- endif -%}
+      <div class="hroofy-cp__progress" aria-live="polite">
+        <div class="hroofy-cp__progress-track" aria-hidden="true">
+          <div class="hroofy-cp__progress-fill"></div>
+        </div>
+        <span class="hroofy-cp__progress-label"></span>
+      </div>
+    </div>
+
+    <div class="hroofy-cp__board">
+      <div class="hroofy-cp__confetti" aria-hidden="true"></div>
+
+      <svg
+        class="hroofy-cp__canvas"
+        viewBox="0 0 400 400"
+        xmlns="http://www.w3.org/2000/svg"
+        role="group"
+        aria-label="{{ s.canvas_label | escape }}"
+      >
+        {%- case preview_mode -%}
+          {%- when 'fish' -%}
+            <rect class="hroofy-cp__region" data-region x="8" y="8" width="384" height="384" rx="36" tabindex="0" role="button" aria-label="البحر"/>
+            <path class="hroofy-cp__region" data-region d="M8 320 Q60 290 110 320 T210 320 T310 320 T392 320 L392 356 Q392 392 356 392 L44 392 Q8 392 8 356 Z" tabindex="0" role="button" aria-label="الرمل"/>
+            <path class="hroofy-cp__region" data-region d="M58 330 Q40 280 62 240 Q78 280 70 330 Z" tabindex="0" role="button" aria-label="عشب البحر"/>
+            <path class="hroofy-cp__region" data-region d="M290 200 L362 138 Q350 200 362 262 Z" tabindex="0" role="button" aria-label="ذيل السمكة"/>
+            <path class="hroofy-cp__region" data-region d="M150 140 Q195 78 248 142 Z" tabindex="0" role="button" aria-label="زعنفة السمكة"/>
+            <ellipse class="hroofy-cp__region" data-region cx="190" cy="200" rx="112" ry="72" tabindex="0" role="button" aria-label="جسم السمكة"/>
+            <path class="hroofy-cp__region" data-region d="M176 131 Q150 200 176 269 L204 270 Q180 200 204 130 Z" tabindex="0" role="button" aria-label="خط السمكة"/>
+            <circle class="hroofy-cp__region" data-region cx="120" cy="186" r="17" tabindex="0" role="button" aria-label="عين السمكة"/>
+            <circle class="hroofy-cp__detail" cx="116" cy="186" r="7"/>
+            <circle class="hroofy-cp__region" data-region cx="80" cy="110" r="14" tabindex="0" role="button" aria-label="فقاعة"/>
+            <circle class="hroofy-cp__region" data-region cx="104" cy="70" r="9" tabindex="0" role="button" aria-label="فقاعة صغيرة"/>
+          {%- when 'rocket' -%}
+            <rect class="hroofy-cp__region" data-region x="8" y="8" width="384" height="384" rx="36" tabindex="0" role="button" aria-label="السماء"/>
+            <circle class="hroofy-cp__region" data-region cx="324" cy="88" r="34" tabindex="0" role="button" aria-label="الكوكب"/>
+            <path class="hroofy-cp__region" data-region d="M70 56 L77 74 L96 75 L81 87 L86 106 L70 95 L54 106 L59 87 L44 75 L63 74 Z" tabindex="0" role="button" aria-label="نجمة"/>
+            <path class="hroofy-cp__region" data-region d="M164 268 Q200 372 236 268 Z" tabindex="0" role="button" aria-label="لهب الصاروخ"/>
+            <path class="hroofy-cp__region" data-region d="M152 212 L104 296 L158 266 Z" tabindex="0" role="button" aria-label="الجناح الأيمن"/>
+            <path class="hroofy-cp__region" data-region d="M248 212 L296 296 L242 266 Z" tabindex="0" role="button" aria-label="الجناح الأيسر"/>
+            <path class="hroofy-cp__region" data-region d="M200 46 Q264 118 252 268 L148 268 Q136 118 200 46 Z" tabindex="0" role="button" aria-label="جسم الصاروخ"/>
+            <path class="hroofy-cp__region" data-region d="M200 46 Q226 72 238 104 L162 104 Q174 72 200 46 Z" tabindex="0" role="button" aria-label="رأس الصاروخ"/>
+            <circle class="hroofy-cp__region" data-region cx="200" cy="164" r="30" tabindex="0" role="button" aria-label="نافذة الصاروخ"/>
+          {%- when 'star' -%}
+            <rect class="hroofy-cp__region" data-region x="8" y="8" width="384" height="384" rx="36" tabindex="0" role="button" aria-label="الخلفية"/>
+            <path class="hroofy-cp__region" data-region d="M300 60 A52 52 0 1 0 352 130 A40 40 0 1 1 300 60 Z" tabindex="0" role="button" aria-label="القمر"/>
+            <path class="hroofy-cp__region" data-region d="M200 70 L232 150 L318 154 L250 206 L274 290 L200 242 L126 290 L150 206 L82 154 L168 150 Z" tabindex="0" role="button" aria-label="النجمة الكبيرة"/>
+            <circle class="hroofy-cp__region" data-region cx="200" cy="186" r="26" tabindex="0" role="button" aria-label="قلب النجمة"/>
+            <path class="hroofy-cp__region" data-region d="M70 284 L78 304 L99 305 L83 318 L88 339 L70 327 L52 339 L57 318 L41 305 L62 304 Z" tabindex="0" role="button" aria-label="نجمة صغيرة"/>
+            <path class="hroofy-cp__region" data-region d="M330 284 L338 304 L359 305 L343 318 L348 339 L330 327 L312 339 L317 318 L301 305 L322 304 Z" tabindex="0" role="button" aria-label="نجمة صغيرة"/>
+            <path class="hroofy-cp__region" data-region d="M60 360 Q200 300 340 360 L340 372 Q200 316 60 372 Z" tabindex="0" role="button" aria-label="قوس قزح"/>
+          {%- else -%}
+            <rect class="hroofy-cp__region" data-region x="8" y="8" width="384" height="384" rx="36" tabindex="0" role="button" aria-label="الخلفية"/>
+            <circle class="hroofy-cp__region" data-region cx="72" cy="72" r="36" tabindex="0" role="button" aria-label="الشمس"/>
+            <path class="hroofy-cp__region" data-region d="M300 52 Q312 30 336 40 Q362 34 366 60 Q384 70 368 88 L292 88 Q276 72 300 52 Z" tabindex="0" role="button" aria-label="السحابة"/>
+            <path class="hroofy-cp__region" data-region d="M330 300 L338 320 L359 321 L343 334 L348 355 L330 343 L312 355 L317 334 L301 321 L322 320 Z" tabindex="0" role="button" aria-label="نجمة"/>
+            <path class="hroofy-cp__region" data-region d="M8 330 Q70 300 130 330 T250 330 T392 326 L392 356 Q392 392 356 392 L44 392 Q8 392 8 356 Z" tabindex="0" role="button" aria-label="العشب"/>
+            <text
+              class="hroofy-cp__region hroofy-cp__glyph"
+              data-region
+              x="200"
+              y="210"
+              text-anchor="middle"
+              dominant-baseline="middle"
+              font-size="{% if preview_key.size > 1 %}150{% else %}240{% endif %}"
+              tabindex="0"
+              role="button"
+              aria-label="{{ s.glyph_label | escape }} {{ preview_key | escape }}"
+            >
+              {{- preview_key | escape -}}
+            </text>
+        {%- endcase -%}
+      </svg>
+
+      <div class="hroofy-cp__toolbar" role="group" aria-label="{{ s.palette_label | escape }}">
+        {%- for color in palette -%}
+          {%- if color != blank -%}
+            <button
+              type="button"
+              class="hroofy-cp__swatch"
+              style="--swatch: {{ color | escape }};"
+              data-color="{{ color | escape }}"
+              aria-pressed="{% if forloop.first %}true{% else %}false{% endif %}"
+              aria-label="{{ s.palette_label | escape }} {{ forloop.index }}"
+            ></button>
+          {%- endif -%}
+        {%- endfor -%}
+        <button
+          type="button"
+          class="hroofy-cp__swatch hroofy-cp__swatch--eraser"
+          data-color="#ffffff"
+          data-eraser
+          aria-pressed="false"
+          aria-label="{{ s.eraser_label | escape }}"
+        ></button>
+        <button type="button" class="hroofy-cp__tool" data-action="random">🎲 {{ s.random_label | escape }}</button>
+        <button type="button" class="hroofy-cp__tool" data-action="reset">↺ {{ s.reset_label | escape }}</button>
+      </div>
+
+      <div class="hroofy-cp__success" role="status">
+        <p class="hroofy-cp__success-text">{{ s.success_text | escape }}</p>
+        <button type="button" class="hroofy-cp__cta" data-action="buy">{{ s.cta_label | escape }}</button>
+      </div>
+    </div>
+  </div>
+</hroofy-coloring-preview>
+
+{% javascript %}
+  if (!customElements.get('hroofy-coloring-preview')) {
+    class HroofyColoringPreview extends HTMLElement {
+      connectedCallback() {
+        this.regions = Array.from(this.querySelectorAll('[data-region]'));
+        this.swatches = Array.from(this.querySelectorAll('.hroofy-cp__swatch'));
+        this.progressFill = this.querySelector('.hroofy-cp__progress-fill');
+        this.progressLabel = this.querySelector('.hroofy-cp__progress-label');
+        this.confetti = this.querySelector('.hroofy-cp__confetti');
+        this.template = this.dataset.progressTemplate || '[colored] / [total]';
+        const first = this.swatches.find((swatch) => swatch.getAttribute('aria-pressed') === 'true');
+        this.currentColor = first ? first.dataset.color : '#FF6B4A';
+
+        this.regions.forEach((region) => {
+          region.addEventListener('click', () => this.paint(region));
+          region.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              this.paint(region);
+            }
+          });
+        });
+
+        this.swatches.forEach((swatch) => {
+          swatch.addEventListener('click', () => this.pick(swatch));
+        });
+
+        this.querySelector('[data-action="reset"]')?.addEventListener('click', () => this.reset());
+        this.querySelector('[data-action="random"]')?.addEventListener('click', () => this.randomize());
+        this.querySelector('[data-action="buy"]')?.addEventListener('click', () => this.goToBuy());
+
+        this.updateProgress();
+      }
+
+      get paletteColors() {
+        return this.swatches.filter((swatch) => !swatch.hasAttribute('data-eraser')).map((swatch) => swatch.dataset.color);
+      }
+
+      pick(swatch) {
+        this.swatches.forEach((item) => item.setAttribute('aria-pressed', item === swatch ? 'true' : 'false'));
+        this.currentColor = swatch.dataset.color;
+      }
+
+      paint(region, color = this.currentColor) {
+        const isErase = color.toLowerCase() === '#ffffff';
+        region.style.fill = color;
+        if (isErase) {
+          delete region.dataset.colored;
+        } else {
+          region.dataset.colored = 'true';
+        }
+        region.classList.remove('is-popping');
+        void region.getBoundingClientRect();
+        region.classList.add('is-popping');
+        this.updateProgress();
+      }
+
+      randomize() {
+        const colors = this.paletteColors;
+        if (!colors.length) return;
+        this.regions.forEach((region, index) => {
+          window.setTimeout(() => {
+            this.paint(region, colors[Math.floor(Math.random() * colors.length)]);
+          }, index * 70);
+        });
+      }
+
+      reset() {
+        this.regions.forEach((region) => {
+          region.style.fill = '';
+          delete region.dataset.colored;
+        });
+        this.dataset.complete = 'false';
+        this.updateProgress();
+      }
+
+      updateProgress() {
+        const total = this.regions.length;
+        const colored = this.regions.filter((region) => region.dataset.colored === 'true').length;
+        const percent = total ? Math.round((colored / total) * 100) : 0;
+        if (this.progressFill) this.progressFill.style.width = `${percent}%`;
+        if (this.progressLabel) {
+          this.progressLabel.textContent = this.template
+            .replace('[colored]', String(colored))
+            .replace('[total]', String(total));
+        }
+
+        const wasComplete = this.dataset.complete === 'true';
+        const isComplete = total > 0 && colored === total;
+        this.dataset.complete = isComplete ? 'true' : 'false';
+        if (isComplete && !wasComplete) this.celebrate();
+      }
+
+      celebrate() {
+        if (!this.confetti || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        const colors = this.paletteColors.length ? this.paletteColors : ['#FF6B4A', '#FFD23F', '#2EC4B6'];
+        this.confetti.innerHTML = '';
+        for (let i = 0; i < 36; i += 1) {
+          const piece = document.createElement('span');
+          piece.style.setProperty('--x', `${Math.random() * 100}%`);
+          piece.style.setProperty('--c', colors[i % colors.length]);
+          piece.style.setProperty('--d', `${1.2 + Math.random() * 1.4}s`);
+          piece.style.animationDelay = `${Math.random() * 0.4}s`;
+          this.confetti.appendChild(piece);
+        }
+        window.setTimeout(() => {
+          if (this.confetti) this.confetti.innerHTML = '';
+        }, 3200);
+      }
+
+      goToBuy() {
+        const form =
+          document.querySelector('product-form-component') ||
+          document.querySelector('form[action*="/cart/add"]');
+        if (!form) return;
+        form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const button = form.querySelector('button[type="submit"], [name="add"]');
+        if (button) window.setTimeout(() => button.focus({ preventScroll: true }), 600);
+      }
+    }
+
+    customElements.define('hroofy-coloring-preview', HroofyColoringPreview);
+  }
+{% endjavascript %}
+
+{% schema %}
+{
+  "name": "Hroofy Coloring Preview",
+  "tag": "section",
+  "class": "hroofy-cp-section",
+  "enabled_on": {
+    "templates": ["product"]
+  },
+  "settings": [
+    {
+      "type": "paragraph",
+      "content": "الرسمة بتتحدد من Metafield المنتج custom.preview_character (حرف أو رقم، أو fish / rocket / star)."
+    },
+    {
+      "type": "text",
+      "id": "badge",
+      "label": "الشارة",
+      "default": "🖍️ جرّب قبل ما تشتري"
+    },
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "العنوان",
+      "default": "لوّن صفحة من الكتاب دلوقتي!"
+    },
+    {
+      "type": "text",
+      "id": "text",
+      "label": "الوصف",
+      "default": "اختار لون واضغط على أي جزء من الرسمة. خلّي طفلك يجرب بنفسه ويشوف متعة كتب حروفي قبل ما توصله."
+    },
+    {
+      "type": "text",
+      "id": "progress_text",
+      "label": "نص التقدم",
+      "info": "استخدم [colored] و [total]",
+      "default": "لونت [colored] من [total] أجزاء"
+    },
+    {
+      "type": "text",
+      "id": "fallback_character",
+      "label": "الرسمة الافتراضية",
+      "info": "حرف أو رقم أو fish / rocket / star",
+      "default": "أ"
+    },
+    {
+      "type": "text",
+      "id": "palette",
+      "label": "ألوان اللوحة (HEX مفصولة بفاصلة)",
+      "default": "#FF6B4A,#FFD23F,#2EC4B6,#5B8DEF,#A66CFF,#FF8FB1,#7BD389,#8B5E3C"
+    },
+    {
+      "type": "text",
+      "id": "success_text",
+      "label": "رسالة النجاح",
+      "default": "🎉 برافو! رسمتك تحفة.. فيه أكتر من 50 صفحة زيها مستنياك في الكتاب!"
+    },
+    {
+      "type": "text",
+      "id": "cta_label",
+      "label": "نص زر الشراء",
+      "default": "اطلب الكتاب الآن"
+    },
+    {
+      "type": "header",
+      "content": "نصوص الإتاحة"
+    },
+    {
+      "type": "text",
+      "id": "canvas_label",
+      "label": "وصف لوحة الرسم",
+      "default": "صفحة تلوين تفاعلية"
+    },
+    {
+      "type": "text",
+      "id": "glyph_label",
+      "label": "وصف الحرف",
+      "default": "الحرف"
+    },
+    {
+      "type": "text",
+      "id": "palette_label",
+      "label": "وصف الألوان",
+      "default": "لون"
+    },
+    {
+      "type": "text",
+      "id": "eraser_label",
+      "label": "نص الممحاة",
+      "default": "ممحاة"
+    },
+    {
+      "type": "text",
+      "id": "random_label",
+      "label": "نص زر التلوين العشوائي",
+      "default": "لوّن لي"
+    },
+    {
+      "type": "text",
+      "id": "reset_label",
+      "label": "نص زر إعادة البدء",
+      "default": "ابدأ من جديد"
+    },
+    {
+      "type": "header",
+      "content": "الألوان"
+    },
+    {
+      "type": "color",
+      "id": "bg_color_1",
+      "label": "لون الخلفية 1",
+      "default": "#E8F7FF"
+    },
+    {
+      "type": "color",
+      "id": "bg_color_2",
+      "label": "لون الخلفية 2",
+      "default": "#FFF1F5"
+    },
+    {
+      "type": "color",
+      "id": "text_color",
+      "label": "لون النص",
+      "default": "#2B2D42"
+    },
+    {
+      "type": "color",
+      "id": "accent_color",
+      "label": "لون مميز",
+      "default": "#FF6B4A"
+    },
+    {
+      "type": "range",
+      "id": "padding_top",
+      "label": "مسافة علوية",
+      "min": 0,
+      "max": 120,
+      "step": 4,
+      "unit": "px",
+      "default": 56
+    },
+    {
+      "type": "range",
+      "id": "padding_bottom",
+      "label": "مسافة سفلية",
+      "min": 0,
+      "max": 120,
+      "step": 4,
+      "unit": "px",
+      "default": 56
+    }
+  ],
+  "presets": [
+    {
+      "name": "Hroofy Coloring Preview"
+    }
+  ]
+}
+{% endschema %}
