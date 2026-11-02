@@ -9,7 +9,9 @@
       8.5,
       11
     ],
-    "bind": "perfect"
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375
   },
   "english": {
     "key": "english",
@@ -21,7 +23,9 @@
       8.5,
       11
     ],
-    "bind": "perfect"
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375
   },
   "numbers": {
     "key": "numbers",
@@ -33,7 +37,9 @@
       8.5,
       11
     ],
-    "bind": "perfect"
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375
   },
   "animals": {
     "key": "animals",
@@ -45,7 +51,9 @@
       8.5,
       11
     ],
-    "bind": "perfect"
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375
   },
   "space": {
     "key": "space",
@@ -57,7 +65,9 @@
       8.5,
       11
     ],
-    "bind": "perfect"
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375
   },
   "creative": {
     "key": "creative",
@@ -69,7 +79,9 @@
       8.5,
       11
     ],
-    "bind": "perfect"
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375
   },
   "gift": {
     "key": "gift",
@@ -81,6 +93,22 @@
       4.25,
       6.875
     ],
-    "bind": "saddle"
+    "bind": "saddle",
+    "margin": 0.125,
+    "hinge": 0.375
+  },
+  "letters_bundle": {
+    "key": "letters_bundle",
+    "pages": 116,
+    "spine_in": 0.3213,
+    "width_in": 17.5713,
+    "height_in": 11.25,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "perfect",
+    "margin": 0.125,
+    "hinge": 0.375
   }
 }

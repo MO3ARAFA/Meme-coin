@@ -47,6 +47,10 @@ BUILD_DIR = os.path.join(COVER_DIR, "_build")
 DPI = 96
 BLEED = 0.125
 SAFE_IN = 0.375  # inside the trim, i.e. 0.5 in from the bleed edge
+HC_WRAP = 0.75  # casewrap: board wrap on every side
+HC_SPINE = 0.25  # casewrap spine for 24-84 pages
+HC_HINGE = 0.5  # keep content this far from the spine folds on casewrap
+HC_COVER_DIR = os.path.join(PRINT_DIR, "covers-hardcover")
 INK = "#2B2D42"
 
 
@@ -185,6 +189,27 @@ BOOKS = {
         thumbs=(3, 5, 7),
     ),
 }
+
+
+def _letters_bundle_book():
+    ar = G.BUILDERS["arabic"](None)
+    ar.pages = ar.pages + G.BUILDERS["english"](None).pages
+    return ar
+
+
+def _letters_bundle_art():
+    left = f'<g transform="translate(105 364.5) scale(0.55)">{ART.art_arabic()}</g>'
+    right = f'<g transform="translate(595 364.5) scale(0.55)">{ART.art_english()}</g>'
+    return left + right
+
+
+BOOKS["letters_bundle"] = dict(
+    slug="letters-bundle-interior", trim=(8.5, 11), bind="perfect", title="باقة الحروف",
+    subtitle="عربي + إنجليزي في مجلد واحد", age="3-6", color="#FF6B4A", spine="#E2553A",
+    art=_letters_bundle_art, book=_letters_bundle_book,
+    blurb=["الحروف العربية من أ إلى ي، والحروف الإنجليزية A-Z،", "في مجلد واحد فيه 116 صفحة.",
+           "لكل حرف رسمة وكلمة وسطور تتبع."], thumbs=(3, 63, 115))
+
 FEATURES = "رسومات على وجه واحد · خطوط عريضة للإيد الصغيرة · شهادة إنجاز في الآخر"
 FEATURES_GIFT = "رسومات على وجه واحد · هدية من حروفي"
 
@@ -277,18 +302,33 @@ def back_design(b, book):
     )
 
 
-def build_cover(key, ppi, extra, ink_only=False):
+def hardcover_spine(pages, override=None):
+    """Lulu casewrap spine: fixed 0.25 in for 24-84 pages unless overridden."""
+    if override is not None:
+        return override
+    if 24 <= pages <= 84:
+        return HC_SPINE
+    raise ValueError(f"{pages} pages is outside the 24-84 range of the fixed 0.25 in casewrap spine; "
+                     "pass --hardcover-spine with the width Lulu shows for this book")
+
+
+def build_cover(key, ppi, extra, ink_only=False, hardcover=False, hc_spine=None):
     b = BOOKS[key]
     pages = pdf_pages(os.path.join(PRINT_DIR, f"{b['slug']}.pdf"))
     tw_in, th_in = b["trim"]
-    spine_in = 0.0 if b["bind"] == "saddle" else pages / ppi + extra
-    W_in = 2 * tw_in + spine_in + 2 * BLEED
-    H_in = th_in + 2 * BLEED
+    if hardcover:
+        margin = HC_WRAP
+        spine_in = hardcover_spine(pages, hc_spine)
+    else:
+        margin = BLEED
+        spine_in = 0.0 if b["bind"] == "saddle" else pages / ppi + extra
+    W_in = 2 * tw_in + spine_in + 2 * margin
+    H_in = th_in + 2 * margin
     W, H = W_in * DPI, H_in * DPI
-    bl, pw, ph, sp = BLEED * DPI, tw_in * DPI, th_in * DPI, spine_in * DPI
+    bl, pw, ph, sp = margin * DPI, tw_in * DPI, th_in * DPI, spine_in * DPI
     back_x, spine_x, front_x = bl, bl + pw, bl + pw + sp
 
-    book = G.BUILDERS[key if key != "creative" else "creative"](None)
+    book = b["book"]() if "book" in b else G.BUILDERS[key](None)
     bg = "#FFFFFF" if ink_only else None
     back_bg = bg or tint(b["color"])
     front_bg = bg or b["color"]
@@ -335,7 +375,9 @@ svg {{ display: block; }}
         width_in=round(W_in, 4),
         height_in=round(H_in, 4),
         trim=(tw_in, th_in),
-        bind=b["bind"],
+        bind="casewrap" if hardcover else b["bind"],
+        margin=margin,
+        hinge=HC_HINGE if hardcover else SAFE_IN,
         barcode=(bx, by, bw, bh),
     )
     return html, info
@@ -364,7 +406,9 @@ def check_ink(pdf, info, tmp):
     tw, th = info["trim"]
     sp = info["spine_in"]
     safe = SAFE_IN
-    panels = {"back": BLEED, "front": BLEED + tw + sp}
+    m = info["margin"]
+    hinge = info["hinge"]
+    panels = {"back": m, "front": m + tw + sp}
     errors = []
     for name, x_in in panels.items():
         box = (round(x_in * dpi), 0, round((x_in + tw) * dpi), im.size[1])
@@ -373,11 +417,12 @@ def check_ink(pdf, info, tmp):
         if not bb:
             errors.append(f"{name}: empty panel")
             continue
+        left_safe, right_safe = (safe, hinge) if name == "back" else (hinge, safe)
         lim = (
-            safe * dpi,
-            (BLEED + safe) * dpi,
-            (tw - safe) * dpi,
-            (BLEED + th - safe) * dpi,
+            left_safe * dpi,
+            (m + safe) * dpi,
+            (tw - right_safe) * dpi,
+            (m + th - safe) * dpi,
         )
         if (
             bb[0] < lim[0] - 2
@@ -400,24 +445,40 @@ def main():
     )
     ap.add_argument("--pages-per-inch", type=float, default=444.0)
     ap.add_argument("--spine-extra", type=float, default=0.06)
+    ap.add_argument("--hardcover", action="store_true", help="Lulu casewrap covers (0.75 in wrap, fixed spine) into covers-hardcover/")
+    ap.add_argument("--hardcover-spine", type=float, default=None, help="casewrap spine width in inches (default: 0.25 for 24-84 pages)")
     args = ap.parse_args()
-    keys = args.books or list(BOOKS)
+    keys = args.books or [k for k in BOOKS if not (args.hardcover and BOOKS[k]["bind"] == "saddle")]
+    out_dir = HC_COVER_DIR if args.hardcover else COVER_DIR
+    build_dir = os.path.join(out_dir, "_build")
     bad = [k for k in keys if k not in BOOKS]
     if bad:
         ap.error(f"unknown: {bad}")
-    os.makedirs(BUILD_DIR, exist_ok=True)
+    os.makedirs(build_dir, exist_ok=True)
     jobs, ink_jobs, infos = [], [], {}
-    for key in keys:
-        slug = BOOKS[key]["slug"].replace("-interior", "-cover")
+    for key in list(keys):
+        if args.hardcover and BOOKS[key]["bind"] == "saddle":
+            print(f"[SKIP] {key}: saddle-stitch books have no casewrap edition")
+            keys.remove(key)
+            continue
+        if args.hardcover:
+            try:
+                hardcover_spine(pdf_pages(os.path.join(PRINT_DIR, BOOKS[key]["slug"] + ".pdf")), args.hardcover_spine)
+            except ValueError as e:
+                print(f"[SKIP] {key}: {e}")
+                keys.remove(key)
+                continue
+        slug = BOOKS[key]["slug"].replace("-interior", "-hardcover" if args.hardcover else "-cover")
         for ink in (False, True):
             html, info = build_cover(
-                key, args.pages_per_inch, args.spine_extra, ink_only=ink
+                key, args.pages_per_inch, args.spine_extra, ink_only=ink,
+                hardcover=args.hardcover, hc_spine=args.hardcover_spine,
             )
-            hp = os.path.join(BUILD_DIR, f"{slug}{'-ink' if ink else ''}.html")
+            hp = os.path.join(build_dir, f"{slug}{'-ink' if ink else ''}.html")
             with open(hp, "w", encoding="utf-8") as f:
                 f.write(html)
             pdf = os.path.join(
-                BUILD_DIR if ink else COVER_DIR, f"{slug}{'-ink' if ink else ''}.pdf"
+                build_dir if ink else out_dir, f"{slug}{'-ink' if ink else ''}.pdf"
             )
             job = {
                 "html": hp,
@@ -432,7 +493,8 @@ def main():
     import pdf_boxes
 
     for job in jobs:
-        pdf_boxes.normalise(job["pdf"], float(job["width"][:-2]), float(job["height"][:-2]))
+        pdf_boxes.normalise(job["pdf"], float(job["width"][:-2]), float(job["height"][:-2]),
+                            bleed_in=HC_WRAP if args.hardcover else BLEED)
 
     failed = False
     with tempfile.TemporaryDirectory() as tmp:
@@ -446,7 +508,7 @@ def main():
             )
             for e in errors:
                 print("       -", e)
-    preview_dir = os.path.join(COVER_DIR, "_preview")
+    preview_dir = os.path.join(out_dir, "_preview")
     os.makedirs(preview_dir, exist_ok=True)
     for job in jobs:
         out = os.path.join(
@@ -457,7 +519,7 @@ def main():
             check=True,
             capture_output=True,
         )
-    with open(os.path.join(COVER_DIR, "cover-specs.json"), "w") as f:
+    with open(os.path.join(out_dir, "cover-specs.json"), "w") as f:
         json.dump(
             {
                 k: {kk: v for kk, v in i.items() if kk != "barcode"}

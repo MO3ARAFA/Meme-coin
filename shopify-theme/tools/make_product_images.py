@@ -436,12 +436,17 @@ def bundle(name, covers, title, subtitle, badge):
 
 
 open(os.path.join(OUT, "_bundles.flag"), "w").write("1")
-bundle(
+# The letters bundle prints as ONE merged volume (116 pages), so it gets a single-book mockup.
+cover(
     "arabic-english-letters-bundle",
-    ["arabic-alphabet", "english-alphabet"],
-    "باقة الحروف المزدوجة",
-    "عربي + إنجليزي · كتابين",
-    "40%",
+    "#FF6B4A",
+    "#E2553A",
+    "باقة الحروف",
+    "عربي + إنجليزي في مجلد واحد",
+    "3-6",
+    f'<g transform="translate(105 364.5) scale(0.55)">{art_arabic()}</g>'
+    f'<g transform="translate(595 364.5) scale(0.55)">{art_english()}</g>',
+    ribbon="116 صفحة · وفّر 40%",
 )
 bundle(
     "genius-complete-bundle",

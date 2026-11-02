@@ -34,6 +34,7 @@ SPEC = {
     "space-adventures-interior": (8.5, 11, 0.5, 0.25, "symmetric"),
     "draw-and-complete-interior": (8.5, 11, 0.5, 0.25, "symmetric"),
     "magic-pocket-gift-interior": (4.25, 6.875, 0.375, 0.125, "symmetric"),
+    "letters-bundle-interior": (8.5, 11, 0.5, 0.25, "symmetric"),
 }
 BLEED = 0.125
 DPI = 48

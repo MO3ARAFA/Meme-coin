@@ -1,0 +1,86 @@
+{
+  "arabic": {
+    "key": "arabic",
+    "pages": 60,
+    "spine_in": 0.25,
+    "width_in": 18.75,
+    "height_in": 12.5,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "casewrap",
+    "margin": 0.75,
+    "hinge": 0.5
+  },
+  "english": {
+    "key": "english",
+    "pages": 56,
+    "spine_in": 0.25,
+    "width_in": 18.75,
+    "height_in": 12.5,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "casewrap",
+    "margin": 0.75,
+    "hinge": 0.5
+  },
+  "numbers": {
+    "key": "numbers",
+    "pages": 56,
+    "spine_in": 0.25,
+    "width_in": 18.75,
+    "height_in": 12.5,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "casewrap",
+    "margin": 0.75,
+    "hinge": 0.5
+  },
+  "animals": {
+    "key": "animals",
+    "pages": 52,
+    "spine_in": 0.25,
+    "width_in": 18.75,
+    "height_in": 12.5,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "casewrap",
+    "margin": 0.75,
+    "hinge": 0.5
+  },
+  "space": {
+    "key": "space",
+    "pages": 48,
+    "spine_in": 0.25,
+    "width_in": 18.75,
+    "height_in": 12.5,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "casewrap",
+    "margin": 0.75,
+    "hinge": 0.5
+  },
+  "creative": {
+    "key": "creative",
+    "pages": 56,
+    "spine_in": 0.25,
+    "width_in": 18.75,
+    "height_in": 12.5,
+    "trim": [
+      8.5,
+      11
+    ],
+    "bind": "casewrap",
+    "margin": 0.75,
+    "hinge": 0.5
+  }
+}

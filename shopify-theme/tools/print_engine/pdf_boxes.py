@@ -8,7 +8,7 @@ from pypdf import PdfReader, PdfWriter
 from pypdf.generic import RectangleObject
 
 
-def normalise(path, width_in, height_in, bleed_in=0.125):
+def normalise(path, width_in, height_in, bleed_in=0.125):  # bleed_in = casewrap wrap on hardcover covers
     w, h, b = width_in * 72, height_in * 72, bleed_in * 72
     reader = PdfReader(path)
     writer = PdfWriter()
